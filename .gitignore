@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+**/__pycache__/
+**/.pytest_cache/
+**/.venv/
+**/venv/
+**/uploads/
+**/node_modules/
+**/dist/
+**/test-results/
+**/playwright-report/
+*.pyc
+**/.pytest_uploads/
+**/.ruff_cache/

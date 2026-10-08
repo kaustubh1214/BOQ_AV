@@ -1,0 +1,64 @@
+# AV Group — BOQ Management stack.
+# Ports are offset from the analytics stack (5433/5434/6379/8000/3000) so both can run side by side.
+# All secrets come from .env (copy .env.example → .env). Nothing secret is hardcoded here.
+name: av-boq
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: av-boq-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-boq}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-boq_db}
+    ports:
+      - "5436:5432"
+    volumes:
+      - boq_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-boq} -d ${POSTGRES_DB:-boq_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: av-boq-redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+
+  api:
+    build:
+      context: ./boq-api
+    container_name: av-boq-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-boq}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-boq_db}
+      REDIS_URL: redis://redis:6379/0
+      UPLOAD_DIR: /data/uploads
+    ports:
+      - "8100:8100"
+    volumes:
+      - boq_uploads:/data/uploads
+
+  ui:
+    build:
+      context: ./boq-ui
+    container_name: av-boq-ui
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "3100:80"
+
+volumes:
+  boq_pgdata:
+  boq_uploads:
