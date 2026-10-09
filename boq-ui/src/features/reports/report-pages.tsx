@@ -148,7 +148,7 @@ function ReportTable({ data, fetching }: { data: ReportData; fetching: boolean }
       </div>
       <div className="max-h-[70dvh] overflow-auto">
         <table className="w-full text-sm">
-          <thead className="sticky top-0 z-10 bg-muted text-xs uppercase tracking-wide text-muted-foreground">
+          <thead className="sticky top-0 z-10 bg-muted text-xs text-muted-foreground">
             <tr>
               {data.columns.map((c, i) => (
                 <th key={c.key} className={cn("whitespace-nowrap px-3 py-2.5 font-medium", numeric(c.type) ? "text-right" : "text-left", i === 0 && "sticky left-0 bg-muted")}>

@@ -11,7 +11,7 @@ export function DropdownMenuContent({ className, align = "end", ...props }: Reac
       <DM.Content
         align={align}
         sideOffset={6}
-        className={cn("z-50 min-w-48 overflow-hidden rounded-lg border bg-popover p-1 text-popover-foreground shadow-lg", className)}
+        className={cn("z-50 min-w-48 overflow-hidden rounded-lg border bg-popover p-1 text-popover-foreground shadow-md", className)}
         {...props}
       />
     </DM.Portal>

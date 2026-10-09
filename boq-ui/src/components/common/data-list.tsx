@@ -81,10 +81,10 @@ export function DataList<T>({
       {/* tablet / desktop */}
       <div className="hidden overflow-x-auto md:block">
         <table className="w-full text-sm">
-          <thead className="sticky top-0 bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground">
+          <thead className="sticky top-0 border-b bg-muted/50 text-xs text-muted-foreground">
             <tr>
               {columns.map((c) => (
-                <th key={c.key} className={cn("whitespace-nowrap px-4 py-2.5 font-medium", align(c.align), c.className)}>
+                <th key={c.key} className={cn("whitespace-nowrap px-4 py-2 font-medium", align(c.align), c.className)}>
                   {c.header}
                 </th>
               ))}
@@ -95,7 +95,7 @@ export function DataList<T>({
               <tr
                 key={rowKey(row)}
                 onClick={() => onRowClick?.(row)}
-                className={cn("hover:bg-accent/50", onRowClick && "cursor-pointer")}
+                className={cn("hover:bg-accent/40", onRowClick && "cursor-pointer")}
               >
                 {columns.map((c) => (
                   <td key={c.key} className={cn("px-4", dense ? "py-2" : "py-3", align(c.align), c.className)}>

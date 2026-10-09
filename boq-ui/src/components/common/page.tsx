@@ -33,7 +33,7 @@ export function PageHeader({
         )}
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="truncate text-xl font-semibold tracking-tight md:text-2xl">{title}</h1>
+            <h1 className="truncate text-xl font-semibold tracking-tight md:text-[22px]">{title}</h1>
             {badge}
           </div>
           {subtitle && <p className="mt-0.5 text-sm text-muted-foreground">{subtitle}</p>}

@@ -36,12 +36,11 @@ export function LoginPage() {
   return (
     <div className="grid min-h-dvh lg:grid-cols-2">
       <div className="relative hidden flex-col justify-between overflow-hidden bg-sidebar p-10 text-sidebar-foreground lg:flex">
-        <div className="pointer-events-none absolute -right-24 -top-24 size-96 rounded-full bg-brand/20 blur-3xl" />
         <div className="relative flex items-center gap-3">
-          <p className="text-sm font-medium tracking-widest text-brand">BOQ & MATERIAL MANAGEMENT</p>
+          <p className="text-xs font-medium tracking-[0.14em] text-brand">BOQ & MATERIAL MANAGEMENT</p>
         </div>
         <div className="relative mx-auto grid place-items-center">
-          <div className="rounded-3xl bg-white p-6 shadow-2xl ring-1 ring-brand/40">
+          <div className="rounded-2xl bg-white p-6 ring-1 ring-white/10">
             <img src="/logo.webp" alt="AV Group Private Limited — Delivering Your Dream Homes" className="size-72 object-contain" />
           </div>
         </div>
@@ -54,7 +53,7 @@ export function LoginPage() {
         </div>
       </div>
       <div className="flex items-center justify-center p-4 sm:p-8">
-        <Card className="w-full max-w-sm p-6 shadow-lg sm:p-8">
+        <Card className="w-full max-w-sm p-6 sm:p-8">
           <div className="mb-6 flex flex-col items-center gap-1 lg:hidden">
             <img src="/logo.webp" alt="AV Group Private Limited" className="size-40 object-contain" />
           </div>

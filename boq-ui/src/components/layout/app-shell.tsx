@@ -114,8 +114,8 @@ function Brand({ compact }: { compact?: boolean }) {
   const { me } = useAuth();
   return (
     <Link to="/" className="flex items-center gap-2.5">
-      <span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-black/10">
-        <img src="/logo.webp" alt="AV Group" className="size-9 object-contain" />
+      <span className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-md bg-white ring-1 ring-black/10">
+        <img src="/logo.webp" alt="AV Group" className="size-8 object-contain" />
       </span>
       {!compact && (
         <div className="leading-tight">
@@ -136,7 +136,7 @@ function SideNav({ onNavigate }: { onNavigate?: () => void }) {
         if (!items.length) return null;
         return (
           <div key={g.group || "home"} className="mb-4">
-            {g.group && <p className="mb-1 px-3 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/50">{g.group}</p>}
+            {g.group && <p className="mb-1 px-3 text-[11px] font-medium uppercase tracking-[0.08em] text-sidebar-foreground/45">{g.group}</p>}
             {items.map((i) => (
               <NavLink
                 key={i.to}
@@ -145,8 +145,8 @@ function SideNav({ onNavigate }: { onNavigate?: () => void }) {
                 onClick={onNavigate}
                 className={({ isActive }) =>
                   cn(
-                    "flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-sidebar-foreground/80 transition-colors hover:bg-white/10 hover:text-sidebar-foreground",
-                    isActive && "bg-white/12 font-medium text-sidebar-foreground shadow-[inset_3px_0_0_var(--accent-brand)]",
+                    "flex items-center gap-3 rounded-md px-3 py-1.5 text-[13px] text-sidebar-foreground/70 transition-colors hover:bg-white/[0.06] hover:text-sidebar-foreground",
+                    isActive && "bg-white/[0.09] font-medium text-sidebar-foreground [&>svg]:text-brand",
                   )
                 }
               >

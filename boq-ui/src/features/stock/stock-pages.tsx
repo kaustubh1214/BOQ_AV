@@ -89,7 +89,7 @@ export function LedgerPage() {
   const rows = q.data?.pages.flatMap((p) => p.data) ?? [];
   const cols: Column<LedgerRow>[] = [
     { key: "d", header: "Date", cell: (r) => <div><p className="font-medium">{fmtDate(r.txn_date)}</p><p className="text-xs text-muted-foreground">{r.material.name}</p></div> },
-    { key: "t", header: "Type", cell: (r) => <span className="text-xs font-medium uppercase tracking-wide">{humanize(r.txn_type)}</span> },
+    { key: "t", header: "Type", cell: (r) => <span className="text-xs font-medium">{humanize(r.txn_type)}</span> },
     { key: "ref", header: "Document", cell: (r) => <RefLink r={r} /> },
     { key: "in", header: "In", align: "right", cell: (r) => (r.qty_in ? <span className="text-success">+{fmtQty(r.qty_in)}</span> : "") },
     { key: "out", header: "Out", align: "right", cell: (r) => (r.qty_out ? <span className="text-destructive">−{fmtQty(r.qty_out)}</span> : "") },

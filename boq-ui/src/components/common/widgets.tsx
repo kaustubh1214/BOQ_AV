@@ -108,8 +108,8 @@ export function KpiCard({ label, value, format, hint }: { label: string; value: 
   const shown = format === "money" ? fmtMoneyShort(value) : format === "pct" ? fmtPct(value) : fmtQty(value);
   return (
     <Card className="p-4">
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-      <p className="mt-1 text-2xl font-semibold tabular-nums" title={format === "money" ? fmtMoney(value) : undefined}>
+      <p className="text-[13px] font-medium text-muted-foreground">{label}</p>
+      <p className="mt-1.5 text-2xl font-semibold tracking-tight tabular-nums" title={format === "money" ? fmtMoney(value) : undefined}>
         {shown}
       </p>
       {hint && <p className="mt-0.5 truncate text-xs text-muted-foreground">{hint}</p>}

@@ -1,32 +1,35 @@
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
 @import "tailwindcss";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {
-  --background: oklch(0.985 0.002 250);
-  --foreground: oklch(0.21 0.03 255);
+  /* Neutral, slightly warm greys; AV gold is the only accent. */
+  --background: oklch(0.985 0.002 85);
+  --foreground: oklch(0.2 0.008 75);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.21 0.03 255);
+  --card-foreground: oklch(0.2 0.008 75);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.21 0.03 255);
-  --primary: oklch(0.5 0.115 78); /* AV gold (deep) */
+  --popover-foreground: oklch(0.2 0.008 75);
+  --primary: oklch(0.22 0.01 75);
   --primary-foreground: oklch(0.985 0 0);
-  --accent-brand: oklch(0.82 0.16 88); /* AV gold */
-  --secondary: oklch(0.955 0.008 250);
-  --secondary-foreground: oklch(0.25 0.03 255);
-  --muted: oklch(0.955 0.008 250);
-  --muted-foreground: oklch(0.5 0.025 255);
-  --accent: oklch(0.95 0.012 250);
-  --accent-foreground: oklch(0.25 0.03 255);
-  --destructive: oklch(0.58 0.22 27);
-  --success: oklch(0.6 0.15 155);
-  --warning: oklch(0.75 0.15 75);
-  --border: oklch(0.91 0.01 250);
-  --input: oklch(0.88 0.012 250);
-  --ring: oklch(0.65 0.13 85);
-  --radius: 0.65rem;
-  --sidebar: oklch(0.22 0.02 75);
-  --sidebar-foreground: oklch(0.93 0.01 250);
+  --accent-brand: oklch(0.78 0.15 85);
+  --secondary: oklch(0.96 0.003 85);
+  --secondary-foreground: oklch(0.25 0.008 75);
+  --muted: oklch(0.96 0.003 85);
+  --muted-foreground: oklch(0.52 0.01 75);
+  --accent: oklch(0.955 0.004 85);
+  --accent-foreground: oklch(0.22 0.008 75);
+  --destructive: oklch(0.577 0.215 27);
+  --success: oklch(0.55 0.13 155);
+  --warning: oklch(0.72 0.15 75);
+  --border: oklch(0.915 0.004 85);
+  --input: oklch(0.88 0.005 85);
+  --ring: oklch(0.7 0.14 85);
+  --radius: 0.5rem;
+  --sidebar: oklch(0.2 0.008 75);
+  --sidebar-foreground: oklch(0.94 0.005 85);
   --chart-1: oklch(0.5 0.12 252);
   --chart-2: oklch(0.72 0.15 75);
   --chart-3: oklch(0.65 0.14 155);
@@ -36,28 +39,28 @@
 }
 
 .dark {
-  --background: oklch(0.17 0.02 255);
-  --foreground: oklch(0.94 0.008 250);
-  --card: oklch(0.21 0.025 255);
-  --card-foreground: oklch(0.94 0.008 250);
-  --popover: oklch(0.22 0.025 255);
-  --popover-foreground: oklch(0.94 0.008 250);
-  --primary: oklch(0.8 0.15 88);
-  --primary-foreground: oklch(0.2 0.03 75);
-  --secondary: oklch(0.27 0.025 255);
-  --secondary-foreground: oklch(0.94 0.008 250);
-  --muted: oklch(0.26 0.022 255);
-  --muted-foreground: oklch(0.7 0.02 250);
-  --accent: oklch(0.28 0.03 255);
-  --accent-foreground: oklch(0.94 0.008 250);
+  --background: oklch(0.16 0.006 75);
+  --foreground: oklch(0.95 0.004 85);
+  --card: oklch(0.195 0.007 75);
+  --card-foreground: oklch(0.95 0.004 85);
+  --popover: oklch(0.21 0.008 75);
+  --popover-foreground: oklch(0.95 0.004 85);
+  --primary: oklch(0.95 0.004 85);
+  --primary-foreground: oklch(0.2 0.008 75);
+  --secondary: oklch(0.26 0.008 75);
+  --secondary-foreground: oklch(0.95 0.004 85);
+  --muted: oklch(0.25 0.007 75);
+  --muted-foreground: oklch(0.7 0.01 80);
+  --accent: oklch(0.27 0.008 75);
+  --accent-foreground: oklch(0.95 0.004 85);
   --destructive: oklch(0.65 0.2 25);
-  --success: oklch(0.7 0.15 155);
+  --success: oklch(0.7 0.14 155);
   --warning: oklch(0.8 0.14 80);
-  --border: oklch(0.3 0.025 255);
-  --input: oklch(0.34 0.025 255);
-  --ring: oklch(0.75 0.14 88);
-  --sidebar: oklch(0.15 0.015 75);
-  --sidebar-foreground: oklch(0.9 0.01 250);
+  --border: oklch(0.3 0.008 75);
+  --input: oklch(0.34 0.008 75);
+  --ring: oklch(0.78 0.14 85);
+  --sidebar: oklch(0.135 0.005 75);
+  --sidebar-foreground: oklch(0.9 0.005 85);
   --chart-1: oklch(0.7 0.12 245);
   --chart-2: oklch(0.78 0.14 75);
   --chart-3: oklch(0.72 0.14 155);
@@ -98,7 +101,8 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 @layer base {
@@ -113,10 +117,29 @@
     background: var(--background);
     color: var(--foreground);
     font-family: var(--font-sans);
-    font-feature-settings: "tnum" 1, "cv11" 1;
+    font-feature-settings: "cv11" 1, "ss03" 1;
+    font-size: 14px;
+    line-height: 1.5;
+    letter-spacing: -0.006em;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
     min-height: 100dvh;
   }
   /* 16px inputs stop iOS from zooming on focus */
+  h1,
+  h2,
+  h3 {
+    letter-spacing: -0.02em;
+  }
+  td,
+  th {
+    font-variant-numeric: tabular-nums;
+  }
+  code,
+  .font-mono {
+    font-family: var(--font-mono);
+    font-size: 0.92em;
+  }
   input,
   select,
   textarea {
