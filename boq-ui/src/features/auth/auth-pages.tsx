@@ -1,4 +1,4 @@
-import { HardHat, KeyRound, Lock } from "lucide-react";
+import { KeyRound, Lock } from "lucide-react";
 import { useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router";
 import { toast } from "sonner";
@@ -36,30 +36,27 @@ export function LoginPage() {
   return (
     <div className="grid min-h-dvh lg:grid-cols-2">
       <div className="relative hidden flex-col justify-between overflow-hidden bg-sidebar p-10 text-sidebar-foreground lg:flex">
-        <div className="flex items-center gap-3">
-          <img src="/icon.svg" alt="" className="size-10 rounded-xl" />
-          <div>
-            <p className="text-lg font-semibold">AV Group</p>
-            <p className="text-sm opacity-70">BOQ & Material Management</p>
+        <div className="pointer-events-none absolute -right-24 -top-24 size-96 rounded-full bg-brand/20 blur-3xl" />
+        <div className="relative flex items-center gap-3">
+          <p className="text-sm font-medium tracking-widest text-brand">BOQ & MATERIAL MANAGEMENT</p>
+        </div>
+        <div className="relative mx-auto grid place-items-center">
+          <div className="rounded-3xl bg-white p-6 shadow-2xl ring-1 ring-brand/40">
+            <img src="/logo.webp" alt="AV Group Private Limited — Delivering Your Dream Homes" className="size-72 object-contain" />
           </div>
         </div>
-        <div className="max-w-md">
-          <h2 className="text-3xl font-semibold leading-tight">Plan centrally. Issue precisely. Know every kilogram.</h2>
-          <p className="mt-4 text-sm leading-relaxed opacity-75">
+        <div className="relative max-w-md">
+          <h2 className="text-2xl font-semibold leading-tight">Plan centrally. Issue precisely. Know every kilogram.</h2>
+          <p className="mt-3 text-sm leading-relaxed opacity-75">
             Market research → BOQ → inward → site requests → issue notes → daily consumption. One ledger, every site, full audit trail.
           </p>
+          <p className="mt-6 text-xs opacity-50">© {new Date().getFullYear()} AV Group Private Limited</p>
         </div>
-        <HardHat className="absolute -bottom-10 -right-10 size-72 opacity-[0.06]" />
-        <p className="text-xs opacity-50">© {new Date().getFullYear()} AV Group</p>
       </div>
       <div className="flex items-center justify-center p-4 sm:p-8">
         <Card className="w-full max-w-sm p-6 shadow-lg sm:p-8">
-          <div className="mb-6 flex items-center gap-3 lg:hidden">
-            <img src="/icon.svg" alt="" className="size-10 rounded-xl" />
-            <div>
-              <p className="font-semibold">AV Group</p>
-              <p className="text-xs text-muted-foreground">BOQ & Material Management</p>
-            </div>
+          <div className="mb-6 flex flex-col items-center gap-1 lg:hidden">
+            <img src="/logo.webp" alt="AV Group Private Limited" className="size-40 object-contain" />
           </div>
           <h1 className="text-xl font-semibold">Sign in</h1>
           <p className="mb-6 mt-1 text-sm text-muted-foreground">Use your AV Group work account.</p>

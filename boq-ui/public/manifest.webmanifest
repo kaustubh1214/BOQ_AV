@@ -3,7 +3,7 @@
   "short_name": "AV BOQ",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0f172a",
-  "theme_color": "#1f3a5f",
-  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+  "background_color": "#1c1710",
+  "theme_color": "#1c1710",
+  "icons": [{ "src": "/logo.webp", "sizes": "500x500", "type": "image/webp", "purpose": "any maskable" }]
 }

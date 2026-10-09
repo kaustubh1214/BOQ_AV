@@ -114,7 +114,9 @@ function Brand({ compact }: { compact?: boolean }) {
   const { me } = useAuth();
   return (
     <Link to="/" className="flex items-center gap-2.5">
-      <img src="/icon.svg" alt="" className="size-8 rounded-lg" />
+      <span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg bg-white shadow-sm ring-1 ring-black/10">
+        <img src="/logo.webp" alt="AV Group" className="size-9 object-contain" />
+      </span>
       {!compact && (
         <div className="leading-tight">
           <p className="text-sm font-semibold">{me?.company_name ?? "AV Group"}</p>
