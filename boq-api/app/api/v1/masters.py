@@ -354,7 +354,10 @@ def _crud(
         data = body.model_dump(exclude_unset=True)
         check_version(obj, data.pop("version", None))
         before = snapshot(obj)
+        cols = model.__table__.columns
         for k, v in data.items():
+            if v is None and k in cols and not cols[k].nullable:
+                continue  # explicit null on a required column = "leave unchanged"
             setattr(obj, k, v)
         bump(obj, ctx)
         await audit(db, ctx, "UPDATE", path, obj.id, None, before, snapshot(obj))

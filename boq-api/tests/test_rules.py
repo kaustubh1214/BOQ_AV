@@ -297,3 +297,13 @@ async def test_attachment_upload_validates_content(api, refs):
     assert bad.status_code == 415
     site_a = await api.as_("site_a")
     assert (await site_a.get(f"/attachments?entity_type=grn&entity_id={g['id']}")).status_code == 404
+
+
+async def test_dashboard_kpis_visible_to_site_users(api):
+    """Regression: the finance scrub must not blank non-finance KPI values (field is named `value`)."""
+    site_a = await api.as_("site_a")
+    d = await site_a.ok("GET", "/dashboard")
+    kpis = {k["key"]: k for k in d["kpis"]}
+    assert kpis["open_rfqs"]["value"] is not None
+    assert "boq_value" not in kpis and "stock_value" not in kpis  # finance KPIs omitted entirely
+    assert any(t["key"] == "issue_receive" for t in d["tasks"])

@@ -8,8 +8,8 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 from sqlalchemy import func, select
 
-from app.api.deps import DB, Perm, respond
-from app.core.responses import Envelope
+from app.api.deps import DB, Perm
+from app.core.responses import Envelope, ok
 from app.models import (
     Grn,
     IssueNote,
@@ -254,8 +254,9 @@ async def dashboard(db: DB, ctx: Perm("reports.read")):
         )
         kpis.append(Kpi(key="open_rfqs", label="Open material requests", value=open_rfqs, format="number"))
 
-    return respond(
-        ctx,
+    # Finance-only KPIs/series are already omitted above for users without finance.view, so no generic
+    # scrub here (it would also blank the KPI field that is literally named "value").
+    return ok(
         DashboardOut(
             financial_year=fy,
             boq_no=boq.boq_no if boq else None,
@@ -264,7 +265,7 @@ async def dashboard(db: DB, ctx: Perm("reports.read")):
             boq_chart=boq_chart,
             project_chart=project_chart,
             low_stock=low_stock,
-        ),
+        )
     )
 
 

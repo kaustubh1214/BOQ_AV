@@ -1,6 +1,6 @@
 # BOQ Management System: Implementation Plan
 
-> **Status:** Draft plan, awaiting "go"
+> **Status:** Implemented — see HANDOFF.md for what was built and deviations
 > **Stack:** React (Vite + TS) · FastAPI · PostgreSQL · Redis
 > **Clients:** Responsive web now, Flutter mobile app later (same `/api/v1`)
 > **Date:** 2026-10-09
