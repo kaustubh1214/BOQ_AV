@@ -18,8 +18,7 @@ PERMISSIONS: dict[str, tuple[str, str]] = {
     "grn.post": ("grn", "Post / cancel goods receipts (updates stock)"),
     "rfq.read": ("rfq", "View material requests"),
     "rfq.create": ("rfq", "Raise / edit / submit / cancel own material requests"),
-    "rfq.approve_pm": ("rfq", "Project-manager approval of material requests"),
-    "rfq.approve_store": ("rfq", "Store approval / close of material requests"),
+    "rfq.approve_store": ("rfq", "Store Manager approval / close of material requests"),
     "issue.read": ("issue", "View issue notes"),
     "issue.create": ("issue", "Draft issue notes"),
     "issue.post": ("issue", "Issue / cancel issue notes (updates stock)"),
@@ -37,46 +36,31 @@ PERMISSIONS: dict[str, tuple[str, str]] = {
     "users.manage": ("admin", "Manage users and their role assignments"),
     "roles.manage": ("admin", "Manage roles and the permission matrix"),
     "audit.read": ("admin", "View the audit trail"),
+    "system.manage": ("admin", "System settings and health (Super Admin only)"),
 }
 
-_READ_ALL = [p for p in PERMISSIONS if p.endswith(".read")]
-
 # role code: (name, default scope, description, permissions)
+# Three roles only. SUPER_ADMIN is the single IT account (seeded once, never creatable from the API).
 ROLES: dict[str, tuple[str, ScopeType, str, list[str]]] = {
-    "SUPER_ADMIN": ("Super Admin", ScopeType.GLOBAL, "Full access incl. users, roles and configuration", list(PERMISSIONS)),
-    "MANAGEMENT": (
-        "Management / Director",
+    "SUPER_ADMIN": (
+        "Super Admin",
         ScopeType.GLOBAL,
-        "Approves BOQs; sees every dashboard and financial",
-        [*_READ_ALL, "boq.approve", "finance.view", "export"],
+        "IT team account: everything, incl. roles, system settings and Store Managers",
+        list(PERMISSIONS),
     ),
-    "PROCUREMENT": (
-        "Procurement Officer",
+    "STORE_MANAGER": (
+        "Store Manager",
         ScopeType.GLOBAL,
-        "Market research, vendors and BOQ rates",
+        "Company admin: masters, sites, users (Site Users), BOQ, inward, request approval, issue, ledger, reports, audit",
         [
             "masters.read",
+            "masters.manage",
             "vendors.manage",
             "market.read",
             "market.manage",
             "boq.read",
             "boq.create",
-            "grn.read",
-            "stock.read",
-            "reports.read",
-            "finance.view",
-            "export",
-        ],
-    ),
-    "STORE_MANAGER": (
-        "Store Manager",
-        ScopeType.STORE,
-        "Runs the central store: BOQ, GRN posting, RFQ store approval, issues, adjustments",
-        [
-            "masters.read",
-            "market.read",
-            "boq.read",
-            "boq.create",
+            "boq.approve",
             "grn.read",
             "grn.create",
             "grn.post",
@@ -93,47 +77,14 @@ ROLES: dict[str, tuple[str, ScopeType, str, list[str]]] = {
             "reports.read",
             "finance.view",
             "export",
+            "users.manage",
+            "audit.read",
         ],
     ),
-    "STORE_KEEPER": (
-        "Store Keeper",
-        ScopeType.STORE,
-        "Drafts GRNs, issue notes and physical counts; cannot post or approve",
-        [
-            "masters.read",
-            "boq.read",
-            "grn.read",
-            "grn.create",
-            "rfq.read",
-            "issue.read",
-            "issue.create",
-            "site.read",
-            "stock.read",
-            "adjustment.create",
-            "reports.read",
-        ],
-    ),
-    "PROJECT_MANAGER": (
-        "Project Manager",
-        ScopeType.PROJECT,
-        "Approves material requests for assigned projects",
-        [
-            "masters.read",
-            "boq.read",
-            "rfq.read",
-            "rfq.approve_pm",
-            "issue.read",
-            "site.read",
-            "stock.read",
-            "reports.read",
-            "finance.view",
-            "export",
-        ],
-    ),
-    "SITE_ENGINEER": (
-        "Site Engineer / Incharge",
+    "SITE_USER": (
+        "Site User",
         ScopeType.SITE,
-        "Raises requests, receives material, logs consumption and returns (quantities only)",
+        "Raises requests, receives material, logs consumption and returns for their site (quantities only, no rates)",
         [
             "masters.read",
             "rfq.read",
@@ -147,13 +98,11 @@ ROLES: dict[str, tuple[str, ScopeType, str, list[str]]] = {
             "reports.read",
         ],
     ),
-    "AUDITOR": (
-        "Auditor / Accounts",
-        ScopeType.GLOBAL,
-        "Read-only access to everything incl. audit trail and valuation",
-        [*_READ_ALL, "finance.view", "export", "audit.read"],
-    ),
 }
+
+# Roles that existed before the simplification; the seed retires them.
+LEGACY_ROLES = ("MANAGEMENT", "PROCUREMENT", "STORE_KEEPER", "PROJECT_MANAGER", "AUDITOR")
+LEGACY_RENAMES = {"SITE_ENGINEER": "SITE_USER"}
 
 # Response fields that are hidden (set to null) for users without finance.view.
 FINANCE_FIELDS = frozenset(

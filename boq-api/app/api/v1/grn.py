@@ -25,7 +25,6 @@ from app.services.common import (
     check_version,
     ensure_status,
     financial_year,
-    maker_checker,
     next_doc_no,
     now_utc,
     q2,
@@ -361,8 +360,6 @@ async def post_grn(grn_id: uuid.UUID, body: VersionIn, db: DB, ctx: Perm("grn.po
     g = await _load_for(db, ctx, grn_id, "grn.post", lock=True)
     ensure_status(g, GrnStatus.DRAFT, action="post")
     check_version(g, body.version)
-    if settings.MAKER_CHECKER_ON_POSTING:
-        maker_checker(g.created_by_id, ctx, "post")
     boq = await get_or_404(db, Boq, g.boq_id, "BOQ", lock=True, options=BOQ_FULL)
     if boq.status != BoqStatus.APPROVED:
         raise AppError("BOQ_NOT_APPROVED", f"BOQ {boq.boq_no} is {boq.status}; edit the GRN to point at the approved BOQ", 409)

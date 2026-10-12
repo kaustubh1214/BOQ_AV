@@ -1,6 +1,6 @@
 """RFQ / Material Request: a site asks the central store for material.
 
-Workflow:  DRAFT → SUBMITTED → PM_APPROVED → STORE_APPROVED → PARTIALLY_ISSUED → ISSUED
+Workflow:  DRAFT → SUBMITTED → STORE_APPROVED (PM_APPROVED is legacy, kept for old data) → PARTIALLY_ISSUED → ISSUED
                       ↘ RETURNED (edit & resubmit)  ↘ REJECTED            ↘ CLOSED / CANCELLED
 """
 
@@ -14,6 +14,8 @@ from pydantic import Field
 from sqlalchemy import func, or_, select
 
 from app.api.deps import DB, IdemDep, PagingDep, Perm, finish, get_or_404, respond, respond_page
+from app.api.v1.issue import IssueIn, IssueItemIn, IssueOut, create_note, dispatch_note
+from app.api.v1.issue import _full as issue_full
 from app.core.errors import AppError, forbidden
 from app.core.responses import Envelope, PageEnvelope
 from app.models import IssueNote, MaterialRequest, MaterialRequestItem, Site
@@ -28,7 +30,6 @@ from app.services.common import (
     check_version,
     ensure_status,
     financial_year,
-    maker_checker,
     next_doc_no,
     now_utc,
     q3,
@@ -226,15 +227,14 @@ async def _submit(db, ctx: UserContext, r: MaterialRequest) -> None:
     await audit(db, ctx, "SUBMIT", "rfq", r.id, r.request_no)
     await notify(
         db,
-        "rfq.approve_pm",
+        "rfq.approve_store",
         type="RFQ_SUBMITTED",
         title=f"Request {r.request_no} needs your approval",
         body=f"{r.site.name if r.site else ''} · {len(r.items)} item(s) · {r.priority}",
         entity_type="rfq",
         entity_id=r.id,
         exclude=ctx.user_id,
-        site_id=r.site_id,
-        project_id=r.project_id,
+        store_id=r.store_id,
     )
 
 
@@ -291,7 +291,7 @@ async def list_rfqs(
     ctx: Perm("rfq.read"),
     paging: PagingDep,
     status: RfqStatus | None = None,
-    queue: Annotated[str | None, Query(pattern="^(pm|store|issue|mine)$", description="Work queues: pm, store, issue, mine")] = None,
+    queue: Annotated[str | None, Query(pattern="^(store|issue|mine)$", description="Work queues: store, issue, mine")] = None,
     project_id: uuid.UUID | None = None,
     site_id: uuid.UUID | None = None,
     priority: Priority | None = None,
@@ -301,12 +301,11 @@ async def list_rfqs(
 ):
     M = MaterialRequest
     stmt = select(M).where(scope_filter(ctx.scope("rfq.read"), store_cols=(M.store_id,), site_col=M.site_id, project_col=M.project_id))
-    if queue == "pm":
+    if queue == "store":
         stmt = stmt.where(
-            M.status == RfqStatus.SUBMITTED, scope_filter(ctx.scope("rfq.approve_pm"), site_col=M.site_id, project_col=M.project_id)
+            M.status.in_([RfqStatus.SUBMITTED, RfqStatus.PM_APPROVED]),
+            scope_filter(ctx.scope("rfq.approve_store"), store_cols=(M.store_id,)),
         )
-    elif queue == "store":
-        stmt = stmt.where(M.status == RfqStatus.PM_APPROVED, scope_filter(ctx.scope("rfq.approve_store"), store_cols=(M.store_id,)))
     elif queue == "issue":
         stmt = stmt.where(
             M.status.in_([RfqStatus.STORE_APPROVED, RfqStatus.PARTIALLY_ISSUED]),
@@ -410,38 +409,11 @@ async def submit_rfq(rfq_id: uuid.UUID, body: VersionIn, db: DB, ctx: Perm("rfq.
     return await finish(db, ctx, lambda: _full(db, r.id))
 
 
-@router.post("/{rfq_id}/pm-approve", response_model=Envelope[RfqOut], summary="Project Manager approval (can reduce quantities)")
-async def pm_approve(rfq_id: uuid.UUID, body: ApproveIn, db: DB, ctx: Perm("rfq.approve_pm")):
-    r = await _load_for(db, ctx, rfq_id, "rfq.approve_pm", lock=True)
-    ensure_status(r, RfqStatus.SUBMITTED, action="approve")
+async def store_approve_core(db, ctx: UserContext, r: MaterialRequest, body: ApproveIn) -> bool:
+    """Store Manager approval of a locked, in-scope request. Returns True when the allocation was overridden."""
+    ensure_status(r, RfqStatus.SUBMITTED, RfqStatus.PM_APPROVED, action="approve")
     check_version(r, body.version)
-    maker_checker(r.created_by_id, ctx)
-    _apply_approved_qty(r, body.items, cap_to_current=False)
-    r.status = RfqStatus.PM_APPROVED
-    bump(r, ctx)
-    await record_approval(db, ctx, "rfq", r.id, "PROJECT_MANAGER", ApprovalAction.APPROVED, body.comment)
-    await audit(db, ctx, "PM_APPROVE", "rfq", r.id, r.request_no)
-    await notify(
-        db,
-        "rfq.approve_store",
-        type="RFQ_PM_APPROVED",
-        title=f"Request {r.request_no} approved by PM — store approval pending",
-        body=r.site.name,
-        entity_type="rfq",
-        entity_id=r.id,
-        exclude=ctx.user_id,
-        store_id=r.store_id,
-    )
-    return await finish(db, ctx, lambda: _full(db, r.id))
-
-
-@router.post("/{rfq_id}/store-approve", response_model=Envelope[RfqOut], summary="Store approval; checks BOQ project allocation")
-async def store_approve(rfq_id: uuid.UUID, body: ApproveIn, db: DB, ctx: Perm("rfq.approve_store")):
-    r = await _load_for(db, ctx, rfq_id, "rfq.approve_store", lock=True)
-    ensure_status(r, RfqStatus.PM_APPROVED, action="store-approve")
-    check_version(r, body.version)
-    maker_checker(r.created_by_id, ctx)
-    _apply_approved_qty(r, body.items, cap_to_current=True)
+    _apply_approved_qty(r, body.items, cap_to_current=r.status == RfqStatus.PM_APPROVED)
     check = await _allocation_check(db, r)
     exceeded = [c for c in check if c.exceeds]
     if exceeded and not body.override_allocation:
@@ -458,17 +430,6 @@ async def store_approve(rfq_id: uuid.UUID, body: ApproveIn, db: DB, ctx: Perm("r
         comment = f"[Allocation override] {comment or ''}".strip()
     await record_approval(db, ctx, "rfq", r.id, "STORE", ApprovalAction.APPROVED, comment)
     await audit(db, ctx, "STORE_APPROVE", "rfq", r.id, r.request_no + (" (allocation override)" if exceeded else ""))
-    await notify(
-        db,
-        "issue.create",
-        type="RFQ_READY_TO_ISSUE",
-        title=f"Request {r.request_no} approved — ready to issue",
-        body=r.site.name,
-        entity_type="rfq",
-        entity_id=r.id,
-        exclude=ctx.user_id,
-        store_id=r.store_id,
-    )
     notify_users(
         db,
         {r.created_by_id},
@@ -478,7 +439,59 @@ async def store_approve(rfq_id: uuid.UUID, body: ApproveIn, db: DB, ctx: Perm("r
         entity_id=r.id,
         exclude=ctx.user_id,
     )
+    return bool(exceeded)
+
+
+@router.post(
+    "/{rfq_id}/store-approve",
+    response_model=Envelope[RfqOut],
+    summary="Store Manager approval (can reduce quantities); checks BOQ project allocation",
+)
+async def store_approve(rfq_id: uuid.UUID, body: ApproveIn, db: DB, ctx: Perm("rfq.approve_store")):
+    r = await _load_for(db, ctx, rfq_id, "rfq.approve_store", lock=True)
+    await store_approve_core(db, ctx, r, body)
     return await finish(db, ctx, lambda: _full(db, r.id))
+
+
+class ApproveIssueIn(ApproveIn):
+    issue_date: date | None = None
+    vehicle_no: Annotated[str | None, Field(max_length=20)] = None
+    driver_name: Annotated[str | None, Field(max_length=80)] = None
+    driver_phone: Annotated[str | None, Field(max_length=20)] = None
+    remarks: Annotated[str | None, Field(max_length=2000)] = None
+
+
+@router.post(
+    "/{rfq_id}/approve-and-issue",
+    response_model=Envelope[IssueOut],
+    status_code=201,
+    summary="One step: Store Manager approves (qty may be reduced) and issues; returns the dispatched issue note",
+)
+async def approve_and_issue(rfq_id: uuid.UUID, body: ApproveIssueIn, db: DB, ctx: Perm("rfq.approve_store"), idem: IdemDep):
+    if (cached := await idem.replay()) is not None:
+        return cached
+    if not ctx.has("issue.post"):
+        raise forbidden("You are not allowed to issue material")
+    r = await _load_for(db, ctx, rfq_id, "rfq.approve_store", lock=True)
+    ensure_covers(ctx, "issue.post", "Request", store_ids=(r.store_id,))
+    await store_approve_core(db, ctx, r, body)
+    lines = [IssueItemIn(request_item_id=i.id, issued_qty=i.approved_qty) for i in r.items if Decimal(i.approved_qty or 0) > 0]
+    note = await create_note(
+        db,
+        ctx,
+        r,
+        IssueIn(
+            request_id=r.id,
+            issue_date=body.issue_date,
+            vehicle_no=body.vehicle_no,
+            driver_name=body.driver_name,
+            driver_phone=body.driver_phone,
+            remarks=body.remarks,
+            items=lines,
+        ),
+    )
+    await dispatch_note(db, ctx, note)
+    return await finish(db, ctx, lambda: issue_full(db, note.id), idem)
 
 
 async def _decide(db, ctx: UserContext, rfq_id: uuid.UUID, body: CommentIn, action: str) -> dict:
@@ -487,9 +500,8 @@ async def _decide(db, ctx: UserContext, rfq_id: uuid.UUID, body: CommentIn, acti
     r = await get_or_404(db, MaterialRequest, rfq_id, "Request", lock=True)
     ensure_status(r, RfqStatus.SUBMITTED, RfqStatus.PM_APPROVED, action=action.lower())
     check_version(r, body.version)
-    perm, stage = ("rfq.approve_pm", "PROJECT_MANAGER") if r.status == RfqStatus.SUBMITTED else ("rfq.approve_store", "STORE")
+    perm, stage = "rfq.approve_store", "STORE"
     ensure_covers(ctx, perm, "Request", project_id=r.project_id, site_id=r.site_id, store_ids=(r.store_id,))
-    maker_checker(r.created_by_id, ctx, action.lower())
     r.status = RfqStatus.REJECTED if action == ApprovalAction.REJECTED else RfqStatus.RETURNED
     bump(r, ctx)
     await record_approval(db, ctx, "rfq", r.id, stage, action, body.comment)
@@ -508,12 +520,12 @@ async def _decide(db, ctx: UserContext, rfq_id: uuid.UUID, body: CommentIn, acti
 
 
 @router.post("/{rfq_id}/reject", response_model=Envelope[RfqOut])
-async def reject_rfq(rfq_id: uuid.UUID, body: CommentIn, db: DB, ctx: Perm("rfq.approve_pm", "rfq.approve_store")):
+async def reject_rfq(rfq_id: uuid.UUID, body: CommentIn, db: DB, ctx: Perm("rfq.approve_store")):
     return await _decide(db, ctx, rfq_id, body, ApprovalAction.REJECTED)
 
 
 @router.post("/{rfq_id}/return", response_model=Envelope[RfqOut], summary="Send back to the site for changes")
-async def return_rfq(rfq_id: uuid.UUID, body: CommentIn, db: DB, ctx: Perm("rfq.approve_pm", "rfq.approve_store")):
+async def return_rfq(rfq_id: uuid.UUID, body: CommentIn, db: DB, ctx: Perm("rfq.approve_store")):
     return await _decide(db, ctx, rfq_id, body, ApprovalAction.RETURNED)
 
 
@@ -533,7 +545,9 @@ async def cancel_rfq(rfq_id: uuid.UUID, body: CommentIn, db: DB, ctx: Perm("rfq.
         "rfq.create", site_id=r.site_id, project_id=r.project_id
     ):
         pass
-    elif r.status in (RfqStatus.PM_APPROVED, RfqStatus.STORE_APPROVED) and ctx.covers("rfq.approve_store", store_ids=(r.store_id,)):
+    elif r.status in (RfqStatus.SUBMITTED, RfqStatus.PM_APPROVED, RfqStatus.STORE_APPROVED) and ctx.covers(
+        "rfq.approve_store", store_ids=(r.store_id,)
+    ):
         if await _live_issue_count(db, r.id):
             raise AppError("HAS_ISSUES", "Cancel or receive the issue notes first, or close the request", 409)
     else:

@@ -1,5 +1,5 @@
-"""Demo data for AV Group, created by driving the real API as each role (so every rule — maker-checker,
-scopes, stock engine — is exercised exactly as in production). Reproduces the notebook sketch:
+"""Demo data for AV Group, created by driving the real API as each role (so every rule — scopes, stock
+engine, approvals — is exercised exactly as in production). Reproduces the notebook sketch:
 Cement 1,00,000 kg planned → 15,000 kg inward → issue to Tower A → receipt with damage → daily consumption.
 
 Users get DEMO_PASSWORD from .env. Safe to re-run: skipped if a BOQ already exists.
@@ -22,17 +22,11 @@ from app.services.common import today
 log = logging.getLogger("boq.seed.demo")
 
 DEMO_USERS = [
-    # email, name, role, scope kind, scope key
-    ("director@avgroup.in", "Anil Verma (Director)", "MANAGEMENT", ScopeType.GLOBAL, None),
-    ("procurement@avgroup.in", "Priya Kulkarni (Procurement)", "PROCUREMENT", ScopeType.GLOBAL, None),
-    ("store.manager@avgroup.in", "Suresh Patil (Store Manager)", "STORE_MANAGER", ScopeType.STORE, "CS-01"),
-    ("store.keeper@avgroup.in", "Ramesh Jadhav (Store Keeper)", "STORE_KEEPER", ScopeType.STORE, "CS-01"),
-    ("pm.heights@avgroup.in", "Meera Joshi (PM, AV Heights)", "PROJECT_MANAGER", ScopeType.PROJECT, "AVH"),
-    ("pm.greens@avgroup.in", "Rahul Deshmukh (PM, AV Greens)", "PROJECT_MANAGER", ScopeType.PROJECT, "AVG"),
-    ("site.towera@avgroup.in", "Vikas Shinde (Site Eng., Tower A)", "SITE_ENGINEER", ScopeType.SITE, "AVH-TA"),
-    ("site.towerb@avgroup.in", "Neha Pawar (Site Eng., Tower B)", "SITE_ENGINEER", ScopeType.SITE, "AVH-TB"),
-    ("site.phase1@avgroup.in", "Sanjay More (Site Eng., Phase 1)", "SITE_ENGINEER", ScopeType.SITE, "AVG-P1"),
-    ("auditor@avgroup.in", "Kavita Rao (Auditor)", "AUDITOR", ScopeType.GLOBAL, None),
+    # email, name, role, scope kind, scope key  (the Super Admin comes from SEED_ADMIN_EMAIL, not from here)
+    ("store.manager@avgroup.in", "Suresh Patil (Store Manager)", "STORE_MANAGER", ScopeType.GLOBAL, None),
+    ("site.towera@avgroup.in", "Vikas Shinde (Site User, Tower A)", "SITE_USER", ScopeType.SITE, "AVH-TA"),
+    ("site.towerb@avgroup.in", "Neha Pawar (Site User, Tower B)", "SITE_USER", ScopeType.SITE, "AVH-TB"),
+    ("site.phase1@avgroup.in", "Sanjay More (Site User, Phase 1)", "SITE_USER", ScopeType.SITE, "AVG-P1"),
 ]
 
 
@@ -92,15 +86,22 @@ async def seed_demo(app) -> None:
             ]
         }
         cats = {}
-        for code, name in [
-            ("CEM", "Cement"),
-            ("STL", "Steel"),
-            ("AGG", "Aggregates & Sand"),
-            ("BLK", "Blocks & Bricks"),
-            ("ELE", "Electrical"),
-            ("PLB", "Plumbing"),
+        for code, name, uom, hsn, gst in [
+            ("CEM", "Cement", "KG", "2523", 28),
+            ("STL", "Steel", "KG", "7214", 18),
+            ("AGG", "Aggregates & Sand", "CUM", "2517", 5),
+            ("BLK", "Blocks & Bricks", "NOS", "6810", 12),
+            ("ELE", "Electrical", "RMT", "8544", 18),
+            ("PLB", "Plumbing", "RMT", "3917", 18),
         ]:
-            cats[code] = (await api.call(admin, "POST", "/masters/categories", json={"code": code, "name": name}))["id"]
+            cats[code] = (
+                await api.call(
+                    admin,
+                    "POST",
+                    "/masters/categories",
+                    json={"code": code, "name": name, "default_uom_id": uoms[uom], "default_hsn_code": hsn, "default_gst_rate": gst},
+                )
+            )["id"]
         mats = {}
         for code, name, cat, uom, hsn, gst, reorder in [
             ("CEM-OPC53", "Cement OPC 53 Grade", "CEM", "KG", "2523", 28, 5000),
@@ -165,7 +166,7 @@ async def seed_demo(app) -> None:
         for email, *_ in DEMO_USERS:
             await api.login(email, settings.DEMO_PASSWORD)
 
-        P, SM, SK, DIR = "procurement@avgroup.in", "store.manager@avgroup.in", "store.keeper@avgroup.in", "director@avgroup.in"
+        SM = "store.manager@avgroup.in"
         TA, TB, P1 = "site.towera@avgroup.in", "site.towerb@avgroup.in", "site.phase1@avgroup.in"
         t = today()
 
@@ -182,7 +183,7 @@ async def seed_demo(app) -> None:
             ("BLK-AAC", "V-SVBM", 51, None, 10),
         ]:
             await api.call(
-                P,
+                SM,
                 "POST",
                 "/market-rates",
                 json={
@@ -232,15 +233,12 @@ async def seed_demo(app) -> None:
                 ],
             },
         )
-        boq = await api.call(SM, "POST", f"/boqs/{boq['id']}/submit", json={"version": boq["version"]})
-        boq = await api.call(
-            DIR, "POST", f"/boqs/{boq['id']}/approve", json={"comment": "Approved for FY 2026-27", "version": boq["version"]}
-        )
+        boq = await api.call(SM, "POST", f"/boqs/{boq['id']}/submit", json={"version": boq["version"]})  # submit = approve
 
-        # ---------------- (3) inward: keeper drafts, manager posts (maker-checker)
+        # ---------------- (3) inward: the Store Manager drafts and posts
         async def grn(vendor, items, days_ago, invoice):
             g = await api.call(
-                SK,
+                SM,
                 "POST",
                 "/grns",
                 json={
@@ -281,9 +279,9 @@ async def seed_demo(app) -> None:
             6,
             "GA-77",
         )
-        # A draft waiting for the store manager to post
+        # A draft GRN waiting to be posted
         await api.call(
-            SK,
+            SM,
             "POST",
             "/grns",
             json={
@@ -293,7 +291,7 @@ async def seed_demo(app) -> None:
             },
         )
 
-        # ---------------- (4) site requests → approvals → (5) issue → (6) receipt
+        # ---------------- (4) site request → (5) Store Manager approves & issues in one step → (6) receipt
         rfq = await api.call(
             TA,
             "POST",
@@ -311,23 +309,18 @@ async def seed_demo(app) -> None:
                 ],
             },
         )
-        rfq = await api.call(
-            "pm.heights@avgroup.in", "POST", f"/rfqs/{rfq['id']}/pm-approve", json={"comment": "OK for L5 slab", "version": rfq["version"]}
-        )
-        rfq = await api.call(SM, "POST", f"/rfqs/{rfq['id']}/store-approve", json={"version": rfq["version"]})
         note = await api.call(
-            SK,
+            SM,
             "POST",
-            "/issue-notes",
+            f"/rfqs/{rfq['id']}/approve-and-issue",
             json={
-                "request_id": rfq["id"],
+                "comment": "OK for L5 slab",
+                "version": rfq["version"],
                 "vehicle_no": "MH12CD5678",
                 "driver_name": "Ganesh",
                 "driver_phone": "+91 90110 00000",
-                "items": [{"request_item_id": i["id"], "issued_qty": i["approved_qty"]} for i in rfq["items"]],
             },
         )
-        note = await api.call(SM, "POST", f"/issue-notes/{note['id']}/issue", json={"version": note["version"]})
         cement_line = next(i for i in note["items"] if i["material"]["code"] == "CEM-OPC53")
         await api.call(
             TA,
@@ -383,5 +376,5 @@ async def seed_demo(app) -> None:
                 ],
             },
         )
-        await api.call("pm.greens@avgroup.in", "POST", f"/rfqs/{r3['id']}/pm-approve", json={"version": r3["version"]})
+        r3 = await api.call(SM, "POST", f"/rfqs/{r3['id']}/store-approve", json={"version": r3["version"]})  # approved, not yet issued
         log.info("demo data created (BOQ %s, requests %s / %s)", boq["boq_no"], r2["request_no"], r3["request_no"])

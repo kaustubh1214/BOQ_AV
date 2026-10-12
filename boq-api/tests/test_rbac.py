@@ -7,19 +7,15 @@ from app.services.permissions import ROLES
 
 ROLE_USER = {
     "SUPER_ADMIN": "admin",
-    "MANAGEMENT": "director",
-    "PROCUREMENT": "procurement",
     "STORE_MANAGER": "store_manager",
-    "STORE_KEEPER": "store_keeper",
-    "PROJECT_MANAGER": "pm_heights",
-    "SITE_ENGINEER": "site_a",
-    "AUDITOR": "auditor",
+    "SITE_USER": "site_a",
 }
 
 ENDPOINTS = [
     ("GET", "/admin/users", ("users.manage",)),
     ("GET", "/admin/roles", ("roles.manage", "users.manage")),
     ("GET", "/admin/audit-logs", ("audit.read",)),
+    ("GET", "/admin/system", ("system.manage",)),
     ("GET", "/masters/materials", ("masters.read",)),
     ("POST", "/masters/materials", ("masters.manage",)),
     ("POST", "/masters/vendors", ("vendors.manage",)),

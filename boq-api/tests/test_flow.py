@@ -8,24 +8,23 @@ def line(progress: dict, material_id: str) -> dict:
 
 
 async def grn(api, refs, items, vendor="V-SBCT") -> dict:
-    sk, sm = await api.as_("store_keeper"), await api.as_("store_manager")
-    g = await sk.ok("POST", "/grns", json={"vendor_id": refs["vendors"][vendor], "invoice_no": "T-1", "items": items})
+    sm = await api.as_("store_manager")
+    g = await sm.ok("POST", "/grns", json={"vendor_id": refs["vendors"][vendor], "invoice_no": "T-1", "items": items})
     return await sm.ok("POST", f"/grns/{g['id']}/post", json={"version": g["version"]})
 
 
-async def approved_rfq(api, refs, site_code: str, items: list[dict], pm: str = "pm_heights", site_user: str = "site_a") -> dict:
+async def approved_rfq(api, refs, site_code: str, items: list[dict], site_user: str = "site_a") -> dict:
     site = await api.as_(site_user)
     r = await site.ok("POST", "/rfqs", json={"site_id": refs["sites"][site_code]["id"], "submit": True, "items": items})
-    r = await (await api.as_(pm)).ok("POST", f"/rfqs/{r['id']}/pm-approve", json={"version": r["version"]})
     return await (await api.as_("store_manager")).ok(
         "POST", f"/rfqs/{r['id']}/store-approve", json={"version": r["version"], "override_allocation": True}
     )
 
 
 async def issue(api, rfq: dict, qty_by_item: dict | None = None) -> dict:
-    sk, sm = await api.as_("store_keeper"), await api.as_("store_manager")
+    sm = await api.as_("store_manager")
     items = [{"request_item_id": i["id"], "issued_qty": (qty_by_item or {}).get(i["id"], i["approved_qty"])} for i in rfq["items"]]
-    n = await sk.ok("POST", "/issue-notes", json={"request_id": rfq["id"], "items": items})
+    n = await sm.ok("POST", "/issue-notes", json={"request_id": rfq["id"], "items": items})
     return await sm.ok("POST", f"/issue-notes/{n['id']}/issue", json={"version": n["version"]})
 
 
@@ -41,7 +40,7 @@ async def test_worked_example(api, refs, plan):
         ]
     )
     cement = ids["Cement"]
-    director = await api.as_("director")
+    director = await api.as_("store_manager")  # sees ₹ values and the BOQ
     boq = await director.ok("GET", "/boqs/current")
 
     # Step 1 — planned 1,00,000; nothing received yet
@@ -62,7 +61,7 @@ async def test_worked_example(api, refs, plan):
     assert ln["actual_avg_rate"] == pytest.approx(6.90)
     assert ln["rate_variance_pct"] == pytest.approx(-1.43)
 
-    # Step 4 — Tower A requests 3,000 → PM + store approve → issued at ₹6.90
+    # Step 4 — Tower A requests 3,000 → Store Manager approves → issued at ₹6.90
     rfq = await approved_rfq(api, refs, "AVH-TA", [{"material_id": cement, "requested_qty": 3000}])
     note = await issue(api, rfq)
     assert note["status"] == "ISSUED"

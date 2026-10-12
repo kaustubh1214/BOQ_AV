@@ -67,20 +67,15 @@ async def _count(db, stmt) -> int:
 async def _tasks(db, ctx: UserContext) -> list[Task]:
     M, N = MaterialRequest, IssueNote
     tasks: list[Task] = []
-    if ctx.has("rfq.approve_pm"):
-        n = await _count(
-            db,
-            select(M.id).where(
-                M.status == RfqStatus.SUBMITTED, scope_filter(ctx.scope("rfq.approve_pm"), site_col=M.site_id, project_col=M.project_id)
-            ),
-        )
-        tasks.append(Task(key="rfq_pm", label="Requests awaiting your approval", count=n, link="/rfqs?queue=pm"))
     if ctx.has("rfq.approve_store"):
         n = await _count(
             db,
-            select(M.id).where(M.status == RfqStatus.PM_APPROVED, scope_filter(ctx.scope("rfq.approve_store"), store_cols=(M.store_id,))),
+            select(M.id).where(
+                M.status.in_([RfqStatus.SUBMITTED, RfqStatus.PM_APPROVED]),
+                scope_filter(ctx.scope("rfq.approve_store"), store_cols=(M.store_id,)),
+            ),
         )
-        tasks.append(Task(key="rfq_store", label="Requests awaiting store approval", count=n, link="/rfqs?queue=store"))
+        tasks.append(Task(key="rfq_store", label="Site requests awaiting your approval", count=n, link="/rfqs?queue=store"))
     if ctx.has("issue.create"):
         n = await _count(
             db,

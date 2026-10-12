@@ -32,7 +32,7 @@ flowchart LR
   BOQ --> GRN["3 · Inward / GRN<br/>10,000 kg received"]
   BOQ -. "pending 90,000 kg" .-> PROC["To procure"]
   GRN --> CS[("Central Store stock<br/>weighted avg rate")]
-  SITE["Project › Site"] -->|"4 · RFQ / Indent"| APR{"Approval<br/>PM → Store Mgr"}
+  SITE["Project › Site"] -->|"4 · RFQ / Indent"| APR{"Approval<br/>Store Manager"}
   APR -->|"approved qty"| ISS["5 · Issue Note<br/>(+ gate pass)"]
   CS --> ISS
   ISS -->|"6 · Receipt ack<br/>(short / damaged)"| SS[("Site stock")]
@@ -47,7 +47,7 @@ flowchart LR
 | 1 | BOQ approved: Cement 1,00,000 kg @ ₹7.00 est. | 0 | 1,00,000 | 0 |
 | 2 | GRN-1: 10,000 kg @ ₹6.80 | 10,000 (avg ₹6.80) | 90,000 | 0 |
 | 3 | GRN-2: 5,000 kg @ ₹7.10 | 15,000 (avg ₹6.90) | 85,000 | 0 |
-| 4 | Site A RFQ 3,000 kg → PM approves 3,000 → Issue Note 3,000 @ ₹6.90 | 12,000 | 85,000 | 3,000 (in transit) |
+| 4 | Site A RFQ 3,000 kg → Store Manager approves 3,000 → Issue Note 3,000 @ ₹6.90 | 12,000 | 85,000 | 3,000 (in transit) |
 | 5 | Site A acknowledges 2,950 received, 50 damaged | 12,000 | 85,000 | 2,950 |
 | 6 | Site A consumes avg 500 kg/day | — | — | days of cover ≈ 5.9 |
 
@@ -75,7 +75,7 @@ flowchart LR
 
 ## 3. Document lifecycles (state machines)
 
-All documents use **maker-checker**: the user who creates a document can never approve it. Approved or posted documents are never edited or deleted. They are **cancelled**, and cancellation writes reversing stock ledger entries.
+Documents are never edited or deleted once approved or posted; they are **cancelled**, and cancellation writes reversing stock ledger entries. (v1 also had maker-checker; v2 removed it, see §6.)
 
 ```
 BOQ:          DRAFT → SUBMITTED → APPROVED → (REVISED → new version DRAFT; old = SUPERSEDED) → CLOSED
@@ -83,7 +83,7 @@ BOQ:          DRAFT → SUBMITTED → APPROVED → (REVISED → new version DRAF
 
 GRN:          DRAFT → POSTED (stock +) → CANCELLED (stock − reversal, only if stock allows)
 
-RFQ:          DRAFT → SUBMITTED → PM_APPROVED → STORE_APPROVED → PARTIALLY_ISSUED → ISSUED → CLOSED
+RFQ:          DRAFT → SUBMITTED → STORE_APPROVED → PARTIALLY_ISSUED → ISSUED → CLOSED   (PM_APPROVED kept only for old data)
                          ↘ REJECTED / RETURNED_FOR_CHANGES        ↘ CANCELLED
 
 Issue Note:   DRAFT → ISSUED (central −, in-transit +) → RECEIVED | PARTIALLY_RECEIVED (site +, shortage logged)
@@ -196,35 +196,39 @@ Conventions:
 
 ## 6. RBAC
 
-### 6.1 Roles (seeded; admins can create more and edit the matrix in the UI)
+> **v2 simplification (Oct 2026).** After the first review AV Group found the original 8-role model too
+> complicated. The system now has **three roles**, one **Super Admin** (our IT team), **Store Managers** (the company
+> admin, who also maintains the central ledger) and **Site Users**. The earlier Director / Procurement / Store Keeper /
+> Project Manager / Auditor roles and the PM approval step were removed. The text elsewhere in this file that
+> mentions them describes the original design; HANDOFF.md and this section are current.
 
-| Role | Typical scope | Summary |
+### 6.1 Roles (seeded; the Super Admin can add custom roles and edit those in the UI)
+
+| Role | Scope | Summary |
 |---|---|---|
-| **Super Admin** | Global | Users, roles, config, everything |
-| **Management / Director** | Global | Approve BOQs and revisions, all dashboards and financials. Read-only on day-to-day transactions. |
-| **Procurement Officer** | Global | Market research, vendors, draft BOQ rates |
-| **Store Manager** | Store | Prepare/submit BOQ, post GRNs, store-approve RFQs, create issue notes, approve adjustments |
-| **Store Keeper** | Store | Draft GRNs, issue notes, physical counts. **Cannot approve or post.** |
-| **Project Manager** | Project(s) | Approve RFQs for their projects; project-level reports |
-| **Site Engineer / Incharge** | Site(s) | Raise RFQs, acknowledge receipts, log consumption, returns. **Sees quantities only, no rates/values.** |
-| **Auditor / Accounts** | Global | Read-only on everything incl. audit log, valuation, exports |
+| **Super Admin** | Global | **Exactly one** account (IT team). Everything, incl. roles & permissions, system settings, Store Manager accounts. Hidden from everyone else; cannot be deactivated or duplicated (API + DB trigger). |
+| **Store Manager** | Global | Company admin + central store: masters, projects/sites, vendors, market research, BOQ (create + approve), GRN (draft + post), approve/reject/issue site requests (one-step *Approve & issue*), returns, adjustments, central ledger, all reports with ₹ values + Excel, audit trail, **Site Users** (create/edit/reset). Cannot edit roles, system settings, other Store Managers or the Super Admin. |
+| **Site User** | Site | Raises requests, receives material (short/damaged), logs consumption, returns extras, views own-site stock/reports. **Quantities only, no rates/values.** Several users per site allowed. |
 
-### 6.2 Permission matrix (abridged; `C`=create, `R`=read, `U`=update draft, `A`=approve/post, `X`=cancel, `E`=export)
+### 6.2 Permission matrix (abridged)
 
-| Module | Admin | Mgmt | Procure | Store Mgr | Store Kpr | PM | Site Eng | Auditor |
-|---|---|---|---|---|---|---|---|---|
-| Masters | CRUD | R | CRU (vendors) | R | R | R | R | R |
-| Market research | CRUD | R | CRU | R | — | — | — | R |
-| BOQ | all | R A | R U | C R U | R | R (own projects) | — | R |
-| GRN | all | R | R | C R U A X | C R U | — | — | R |
-| RFQ | all | R | — | R A X | R | R A (own) | C R U X (own) | R |
-| Issue note | all | R | — | C R A X | C R U | R (own) | R + receive (own) | R |
-| Consumption / returns | all | R | — | R A (returns) | R | R | C R U (own) | R |
-| Adjustments | all | R | — | C R A | C R U | — | — | R |
-| Reports: qty | all | all | all | store | store | project | site | all |
-| Reports: ₹ value | all | all | all | store | — | project | **—** | all |
-| Export | E | E | E | E | — | E | — | E |
-| Users / roles / audit log | all | R audit | — | — | — | — | — | R audit |
+| Module | Super Admin | Store Manager | Site User |
+|---|---|---|---|
+| Masters, projects, sites, vendors | CRUD | CRUD | R |
+| Market research | CRUD | CRUD | — |
+| BOQ | all | create, revise, approve | — |
+| GRN | all | draft + post + cancel | — |
+| Requests (RFQ) | all | approve / reject / return / issue | create + submit + cancel (own site) |
+| Issue note | all | create + issue + cancel | receive (own site) |
+| Consumption / returns | all | receive returns | create (own site) |
+| Adjustments | all | create + approve | — |
+| Reports: qty | all | all | own site |
+| Reports: ₹ value, Excel export | all | all | **—** |
+| Users | all (Store Managers + Site Users) | Site Users only | — |
+| Roles & permissions, system | yes | — | — |
+| Audit trail | yes | yes | — |
+
+There is **no maker-checker (two-person) rule**: the Store Manager does the whole store cycle, so they can prepare, approve and post every document. (The `MAKER_CHECKER_ON_POSTING` setting was removed.)
 
 ### 6.3 Enforcement (defence in depth)
 1. **Route level:** `Depends(require_perm("rfq.approve"))`. Reuses the analytics pattern, extended to `module.action` codes.
@@ -463,7 +467,7 @@ Ports are chosen to avoid clashing with the analytics stack: Postgres **5436**, 
 | Q2 | Is the BOQ **one central BOQ** for the whole org, or **one BOQ per project** rolling up to the central store? | One central BOQ per financial year, with **optional** per-project/site allocations |
 | Q3 | Are **Purchase Orders / vendor procurement** in scope? | No for v1. GRN records vendor + invoice directly. PO hooks reserved. |
 | Q4 | "RFQ" normally means *Request for Quotation* (to vendors). For site → store requests, the usual term is *Indent / Material Requisition*. What label should the UI use? | UI label **"RFQ (Material Request)"** to match your team's language |
-| Q5 | RFQ approval chain? | Site Engineer → **Project Manager** → **Store Manager**, then issue |
+| Q5 | RFQ approval chain? | ~~Site → PM → Store Manager~~ → **Site User → Store Manager** (one-step *Approve & issue*) — simplified Oct 2026 |
 | Q6 | Do sites hold their own stock and log **daily consumption**? | Yes (the "Day" in the sketch) |
 | Q7 | GST on inward? | Capture GST % and amounts on the GRN for valuation; no tax filing or accounting integration |
 | Q8 | What does **"(AU)"** in the sketch mean: Audit, Approval/Authorisation, or something else? | Treated as audit + approval (covered by §3 and §9) |

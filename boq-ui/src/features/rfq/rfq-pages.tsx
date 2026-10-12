@@ -5,7 +5,7 @@ import { Link, useNavigate, useParams } from "react-router";
 import { toast } from "sonner";
 import { type Column, DataList, Pager } from "@/components/common/data-list";
 import { ActionBar, EmptyState, ErrorState, InfoGrid, LoadingRows, PageHeader, Section, StatusBadge } from "@/components/common/page";
-import { MaterialPicker, type PickedMaterial, SiteSelect, useMySites } from "@/components/common/pickers";
+import { MaterialPicker, type PickedMaterial, SiteSelect, UnitSelect, useMySites } from "@/components/common/pickers";
 import { ApprovalTimeline, Attachments, ConfirmAction, QtyInput } from "@/components/common/widgets";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,8 +22,7 @@ import { cn, newIdempotencyKey } from "@/lib/utils";
 const QUEUES: { key: string; label: string; perm: string }[] = [
   { key: "", label: "All", perm: "rfq.read" },
   { key: "mine", label: "My requests", perm: "rfq.create" },
-  { key: "pm", label: "Awaiting my approval", perm: "rfq.approve_pm" },
-  { key: "store", label: "Store approval", perm: "rfq.approve_store" },
+  { key: "store", label: "Awaiting my approval", perm: "rfq.approve_store" },
   { key: "issue", label: "Ready to issue", perm: "issue.create" },
 ];
 
@@ -56,7 +55,7 @@ export function RfqListPage() {
     <>
       <PageHeader
         title="Material requests (RFQ)"
-        subtitle="Sites request material from the central store; PM and store approve"
+        subtitle="Sites request material from the central store; the Store Manager approves and issues"
         actions={can("rfq.create") && (
           <Button asChild>
             <Link to="/rfqs/new">
@@ -78,7 +77,7 @@ export function RfqListPage() {
         <SiteSelect value={values.site_id} onChange={(v) => set({ site_id: v })} allowEmpty className="w-full sm:w-64" />
         <Select value={values.status} onChange={(e) => set({ status: e.target.value })} className="w-auto">
           <option value="">Any status</option>
-          {["DRAFT", "SUBMITTED", "RETURNED", "PM_APPROVED", "STORE_APPROVED", "PARTIALLY_ISSUED", "ISSUED", "REJECTED", "CANCELLED", "CLOSED"].map((s) => (
+          {["DRAFT", "SUBMITTED", "RETURNED", "STORE_APPROVED", "PARTIALLY_ISSUED", "ISSUED", "REJECTED", "CANCELLED", "CLOSED"].map((s) => (
             <option key={s} value={s}>{s.replace(/_/g, " ").toLowerCase()}</option>
           ))}
         </Select>
@@ -110,16 +109,16 @@ interface AllocLine {
 export function RfqDetailPage() {
   const { id } = useParams();
   const nav = useNavigate();
-  const { can, me } = useAuth();
+  const { can } = useAuth();
   const { data: r, isLoading, error } = useOne<Rfq>("rfq", `/rfqs/${id}`);
   const { data: alloc } = useQuery({
     queryKey: ["rfq-alloc", id, r?.version],
     queryFn: async () => (await get<AllocLine[]>(`/rfqs/${id}/allocation-check`)).data,
-    enabled: !!r && ["SUBMITTED", "PM_APPROVED"].includes(r.status) && can("rfq.approve_pm", "rfq.approve_store"),
+    enabled: !!r && ["SUBMITTED", "PM_APPROVED"].includes(r.status) && can("rfq.approve_store"),
   });
-  const [approving, setApproving] = useState<null | "pm" | "store">(null);
+  const [approving, setApproving] = useState<null | "approve" | "issue">(null);
   const inv = ["rfq", "rfqs", "rfq-alloc"];
-  const submit = useAction(() => post(`/rfqs/${id}/submit`, { version: r!.version }), { success: "Submitted to project manager", invalidate: inv });
+  const submit = useAction(() => post(`/rfqs/${id}/submit`, { version: r!.version }), { success: "Submitted to the Store Manager", invalidate: inv });
   const reject = useAction((c: string) => post(`/rfqs/${id}/reject`, { version: r!.version, comment: c }), { success: "Request rejected", invalidate: inv });
   const sendBack = useAction((c: string) => post(`/rfqs/${id}/return`, { version: r!.version, comment: c }), { success: "Returned to site for changes", invalidate: inv });
   const cancel = useAction((c: string) => post(`/rfqs/${id}/cancel`, { version: r!.version, comment: c || null }), { success: "Request cancelled", invalidate: inv });
@@ -127,10 +126,9 @@ export function RfqDetailPage() {
 
   if (isLoading) return <LoadingRows />;
   if (error || !r) return <ErrorState error={error} />;
-  const mine = r.created_by_id === me?.id;
-  const editable = ["DRAFT", "RETURNED"].includes(r.status) && can("rfq.create");
-  const canPm = r.status === "SUBMITTED" && can("rfq.approve_pm") && !mine;
-  const canStore = r.status === "PM_APPROVED" && can("rfq.approve_store") && !mine;
+    const editable = ["DRAFT", "RETURNED"].includes(r.status) && can("rfq.create");
+  const canStore = ["SUBMITTED", "PM_APPROVED"].includes(r.status) && can("rfq.approve_store");
+  const canApproveAndIssue = canStore && can("issue.post");
   const canIssue = ["STORE_APPROVED", "PARTIALLY_ISSUED"].includes(r.status) && can("issue.create");
   const allocBy = Object.fromEntries((alloc ?? []).map((a) => [a.material_id, a]));
 
@@ -173,14 +171,19 @@ export function RfqDetailPage() {
                 </Link>
               </Button>
             )}
-            {editable && <ConfirmAction label="Submit" icon={<Send />} title="Submit request?" description="Your project manager will be notified for approval." onConfirm={() => submit.mutateAsync(undefined)} />}
-            {(canPm || canStore) && (
+            {editable && <ConfirmAction label="Submit" icon={<Send />} title="Submit request?" description="The Store Manager will be notified for approval." onConfirm={() => submit.mutateAsync(undefined)} />}
+            {canStore && (
               <>
                 <ConfirmAction label="Send back" variant="outline" title="Return to site for changes" comment="required" onConfirm={(c) => sendBack.mutateAsync(c)} />
                 <ConfirmAction label="Reject" variant="outline" title="Reject request" comment="required" onConfirm={(c) => reject.mutateAsync(c)} />
-                <Button variant="success" onClick={() => setApproving(canPm ? "pm" : "store")}>
-                  <CheckCircle2 /> Approve
+                <Button variant={canApproveAndIssue ? "outline" : "success"} onClick={() => setApproving("approve")}>
+                  <CheckCircle2 /> {canApproveAndIssue ? "Approve only" : "Approve"}
                 </Button>
+                {canApproveAndIssue && (
+                  <Button variant="success" onClick={() => setApproving("issue")}>
+                    <Truck /> Approve &amp; issue
+                  </Button>
+                )}
               </>
             )}
             {canIssue && (
@@ -189,7 +192,7 @@ export function RfqDetailPage() {
               </Button>
             )}
             {canIssue && can("rfq.approve_store") && r.status === "PARTIALLY_ISSUED" && <ConfirmAction label="Close" variant="ghost" title="Close request?" description="No further material will be issued against it." comment="optional" onConfirm={(c) => close.mutateAsync(c)} />}
-            {((["DRAFT", "SUBMITTED", "RETURNED"].includes(r.status) && can("rfq.create")) || (["PM_APPROVED", "STORE_APPROVED"].includes(r.status) && can("rfq.approve_store"))) && (
+            {((["DRAFT", "SUBMITTED", "RETURNED"].includes(r.status) && can("rfq.create")) || (["SUBMITTED", "PM_APPROVED", "STORE_APPROVED"].includes(r.status) && can("rfq.approve_store"))) && (
               <ConfirmAction label="Cancel request" variant="ghost" title="Cancel this request?" comment="optional" onConfirm={(c) => cancel.mutateAsync(c)} />
             )}
           </>
@@ -232,29 +235,56 @@ export function RfqDetailPage() {
             <ApprovalTimeline items={r.approvals} />
           </Section>
           <Section title="Attachments">
-            <Attachments entityType="rfq" entityId={r.id} canUpload={can("rfq.create", "rfq.approve_pm", "rfq.approve_store")} />
+            <Attachments entityType="rfq" entityId={r.id} canUpload={can("rfq.create", "rfq.approve_store")} />
           </Section>
         </div>
       </div>
-      {approving && <ApproveDialog rfq={r} stage={approving} alloc={allocBy} onClose={() => setApproving(null)} />}
+      {approving && <ApproveDialog rfq={r} mode={approving} alloc={allocBy} onClose={() => setApproving(null)} onIssued={(noteId) => nav(`/issue-notes/${noteId}`)} />}
     </>
   );
 }
 
-function ApproveDialog({ rfq, stage, alloc, onClose }: { rfq: Rfq; stage: "pm" | "store"; alloc: Record<string, AllocLine>; onClose: () => void }) {
-  const [qty, setQty] = useState<Record<string, string>>(() => Object.fromEntries(rfq.items.map((i) => [i.id, String(stage === "store" ? (i.approved_qty ?? i.requested_qty) : i.requested_qty)])));
+function ApproveDialog({
+  rfq,
+  mode,
+  alloc,
+  onClose,
+  onIssued,
+}: {
+  rfq: Rfq;
+  mode: "approve" | "issue";
+  alloc: Record<string, AllocLine>;
+  onClose: () => void;
+  onIssued: (noteId: string) => void;
+}) {
+  const [qty, setQty] = useState<Record<string, string>>(() => Object.fromEntries(rfq.items.map((i) => [i.id, String(i.approved_qty ?? i.requested_qty)])));
   const [comment, setComment] = useState("");
+  const [vehicle, setVehicle] = useState("");
+  const [driver, setDriver] = useState("");
   const [override, setOverride] = useState(false);
   const [needsOverride, setNeedsOverride] = useState(false);
+  const issuing = mode === "issue";
+  const [idem] = useState(newIdempotencyKey);
   const approve = useAction(
-    () =>
-      post(`/rfqs/${rfq.id}/${stage === "pm" ? "pm-approve" : "store-approve"}`, {
+    () => {
+      const body = {
         version: rfq.version,
         comment: comment || null,
         override_allocation: override,
         items: rfq.items.map((i) => ({ item_id: i.id, approved_qty: Number(qty[i.id] || 0) })),
-      }),
-    { success: stage === "pm" ? "Approved — sent to store" : "Approved — ready to issue", invalidate: ["rfq", "rfqs", "rfq-alloc"], onSuccess: onClose },
+      };
+      return issuing
+        ? post<{ id: string }>(`/rfqs/${rfq.id}/approve-and-issue`, { ...body, vehicle_no: vehicle || null, driver_name: driver || null }, { "Idempotency-Key": idem })
+        : post<unknown>(`/rfqs/${rfq.id}/store-approve`, body);
+    },
+    {
+      success: issuing ? "Approved and issued — material is on its way" : "Approved — ready to issue",
+      invalidate: ["rfq", "rfqs", "rfq-alloc", "issue-notes", "stock"],
+      onSuccess: (out) => {
+        onClose();
+        if (issuing) onIssued((out as { id: string }).id);
+      },
+    },
   );
   const run = async () => {
     try {
@@ -265,17 +295,23 @@ function ApproveDialog({ rfq, stage, alloc, onClose }: { rfq: Rfq; stage: "pm" |
   };
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent title={stage === "pm" ? "Project manager approval" : "Store approval"} description="You can reduce quantities. Set 0 to drop a line." className="sm:max-w-xl">
+      <DialogContent
+        title={issuing ? "Approve & issue" : "Approve request"}
+        description={issuing ? "Reduce quantities if needed. Stock leaves the central store as soon as you confirm." : "You can reduce quantities. Set 0 to drop a line."}
+        className="sm:max-w-xl"
+      >
         <ul className="divide-y rounded-lg border">
           {rfq.items.map((i) => {
-            const max = stage === "store" ? (i.approved_qty ?? i.requested_qty) : i.requested_qty;
+            const max = i.approved_qty ?? i.requested_qty;
             const a = alloc[i.material.id];
+            const short = issuing && Number(qty[i.id] || 0) > i.central_stock;
             return (
               <li key={i.id} className="grid grid-cols-[1fr_7.5rem] items-center gap-3 p-3">
                 <div className="min-w-0 text-sm">
                   <p className="truncate font-medium">{i.material.name}</p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className={cn("text-xs text-muted-foreground", short && "text-destructive")}>
                     Asked {fmtQty(i.requested_qty)} {i.material.uom} · central stock {fmtQty(i.central_stock)}
+                    {short && " — not enough stock"}
                     {a?.has_allocation && ` · allocation left ${fmtQty((a.allocated ?? 0) - (a.approved_elsewhere ?? 0))}`}
                   </p>
                 </div>
@@ -284,10 +320,20 @@ function ApproveDialog({ rfq, stage, alloc, onClose }: { rfq: Rfq; stage: "pm" |
             );
           })}
         </ul>
+        {issuing && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Vehicle no.">
+              <Input value={vehicle} onChange={(e) => setVehicle(e.target.value.toUpperCase())} placeholder="MH12AB1234" maxLength={20} />
+            </Field>
+            <Field label="Driver name">
+              <Input value={driver} onChange={(e) => setDriver(e.target.value)} maxLength={80} />
+            </Field>
+          </div>
+        )}
         <Field label="Comment (optional)">
           <Textarea rows={2} value={comment} onChange={(e) => setComment(e.target.value)} />
         </Field>
-        {(needsOverride || Object.values(alloc).some((a) => a.exceeds)) && stage === "store" && (
+        {(needsOverride || Object.values(alloc).some((a) => a.exceeds)) && (
           <label className="flex items-start gap-2 rounded-md bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200">
             <input type="checkbox" className="mt-0.5 size-4" checked={override} onChange={(e) => setOverride(e.target.checked)} />
             This exceeds the project's BOQ allocation. Approve anyway (recorded as an override in the audit trail).
@@ -295,7 +341,9 @@ function ApproveDialog({ rfq, stage, alloc, onClose }: { rfq: Rfq; stage: "pm" |
         )}
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button variant="outline" onClick={onClose}>Close</Button>
-          <Button variant="success" loading={approve.isPending} onClick={run}>Approve</Button>
+          <Button variant="success" loading={approve.isPending} onClick={run}>
+            {issuing ? "Approve & issue" : "Approve"}
+          </Button>
         </div>
       </DialogContent>
     </Dialog>
@@ -309,8 +357,9 @@ interface Line {
   material: PickedMaterial | null;
   qty: string;
   remarks: string;
+  uom_id: string;
 }
-const blank = (): Line => ({ key: crypto.randomUUID(), material: null, qty: "", remarks: "" });
+const blank = (): Line => ({ key: crypto.randomUUID(), material: null, qty: "", remarks: "", uom_id: "" });
 
 export function RfqFormPage() {
   const { id } = useParams();
@@ -335,11 +384,11 @@ export function RfqFormPage() {
     setRequiredBy(existing.required_by ?? "");
     setPriority(existing.priority);
     setPurpose(existing.purpose ?? "");
-    setLines(existing.items.map((i) => ({ key: i.id, material: i.material, qty: String(i.requested_qty), remarks: i.remarks ?? "" })));
+    setLines(existing.items.map((i) => ({ key: i.id, material: i.material, qty: String(i.requested_qty), remarks: i.remarks ?? "", uom_id: "" })));
   }, [existing]);
 
   const update = (key: string, p: Partial<Line>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...p } : l)));
-  const items = lines.filter((l) => l.material && Number(l.qty) > 0).map((l) => ({ material_id: l.material!.id, requested_qty: Number(l.qty), remarks: l.remarks || null }));
+  const items = lines.filter((l) => l.material && Number(l.qty) > 0).map((l) => ({ material_id: l.material!.id, requested_qty: Number(l.qty), uom_id: l.uom_id || null, remarks: l.remarks || null }));
   const valid = site && items.length > 0;
 
   const save = async (submit: boolean) => {
@@ -388,10 +437,13 @@ export function RfqFormPage() {
             {lines.map((l, idx) => (
               <li key={l.key} className="grid gap-3 p-4 sm:grid-cols-[2fr_1fr_auto] sm:items-end md:px-5">
                 <Field label={`${idx + 1}. Material`}>
-                  <MaterialPicker value={l.material} onChange={(m) => update(l.key, { material: m })} />
+                  <MaterialPicker value={l.material} onChange={(m) => update(l.key, { material: m, uom_id: "" })} />
                 </Field>
-                <Field label={`Quantity${l.material ? ` (${l.material.uom})` : ""}`}>
-                  <QtyInput value={l.qty} onChange={(e) => update(l.key, { qty: e.target.value })} />
+                <Field label="Quantity">
+                  <div className="flex gap-2">
+                    <QtyInput value={l.qty} onChange={(e) => update(l.key, { qty: e.target.value })} />
+                    <UnitSelect material={l.material} value={l.uom_id} className="w-24 shrink-0" onChange={(uom_id) => update(l.key, { uom_id })} />
+                  </div>
                 </Field>
                 <Button type="button" variant="ghost" size="icon" className="justify-self-end" aria-label="Remove line" onClick={() => setLines((ls) => (ls.length > 1 ? ls.filter((x) => x.key !== l.key) : [blank()]))}>
                   <Trash2 />

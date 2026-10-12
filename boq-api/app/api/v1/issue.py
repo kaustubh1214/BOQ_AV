@@ -16,14 +16,13 @@ from pydantic import Field
 from sqlalchemy import func, or_, select
 
 from app.api.deps import DB, IdemDep, PagingDep, Perm, finish, get_or_404, respond, respond_page
-from app.core.config import settings
 from app.core.errors import AppError
 from app.core.responses import Envelope, PageEnvelope
 from app.models import IssueNote, IssueNoteItem, MaterialRequest, MaterialRequestItem, Store
 from app.models.enums import DocType, IssueStatus, RfqStatus, TxnType
 from app.schemas.common import CancelIn, In, NonNegQty, Num, OptNum, Out, PosQty, VersionIn
 from app.schemas.docs import MaterialBrief, SiteBrief, StoreBrief, mat_brief
-from app.services.common import audit, bump, check_version, ensure_status, maker_checker, next_doc_no, now_utc, q2, q3, snapshot, today
+from app.services.common import audit, bump, check_version, ensure_status, next_doc_no, now_utc, q2, q3, snapshot, today
 from app.services.context import UserContext, ensure_covers, scope_filter
 from app.services.lookups import site_store
 from app.services.names import user_names
@@ -286,12 +285,8 @@ async def list_issue_notes(
     return respond_page(ctx, [_summary(n, names, stores) for n in rows], total, paging)
 
 
-@router.post("", response_model=Envelope[IssueOut], status_code=201)
-async def create_issue_note(body: IssueIn, db: DB, ctx: Perm("issue.create"), idem: IdemDep):
-    if (cached := await idem.replay()) is not None:
-        return cached
-    r = await get_or_404(db, MaterialRequest, body.request_id, "Request", lock=True)
-    ensure_covers(ctx, "issue.create", "Request", store_ids=(r.store_id,))
+async def create_note(db, ctx: UserContext, r: MaterialRequest, body: IssueIn) -> IssueNote:
+    """Creates a DRAFT issue note against a locked, approved request."""
     ensure_status(r, RfqStatus.STORE_APPROVED, RfqStatus.PARTIALLY_ISSUED, action="issue against this request")
     issue_date = body.issue_date or today()
     if issue_date > today():
@@ -318,18 +313,16 @@ async def create_issue_note(body: IssueIn, db: DB, ctx: Perm("issue.create"), id
     db.add(n)
     await db.flush()
     await audit(db, ctx, "CREATE", "issue_note", n.id, f"{n.issue_no} for {r.request_no}", None, snapshot(n))
-    if settings.MAKER_CHECKER_ON_POSTING:
-        await notify(
-            db,
-            "issue.post",
-            type="ISSUE_DRAFTED",
-            title=f"Issue note {n.issue_no} ready to issue",
-            body=r.site.name,
-            entity_type="issue_note",
-            entity_id=n.id,
-            exclude=ctx.user_id,
-            store_id=r.store_id,
-        )
+    return n
+
+
+@router.post("", response_model=Envelope[IssueOut], status_code=201)
+async def create_issue_note(body: IssueIn, db: DB, ctx: Perm("issue.create"), idem: IdemDep):
+    if (cached := await idem.replay()) is not None:
+        return cached
+    r = await get_or_404(db, MaterialRequest, body.request_id, "Request", lock=True)
+    ensure_covers(ctx, "issue.create", "Request", store_ids=(r.store_id,))
+    n = await create_note(db, ctx, r, body)
     return await finish(db, ctx, lambda: _full(db, n.id), idem)
 
 
@@ -360,14 +353,8 @@ async def update_issue_note(note_id: uuid.UUID, body: IssueUpdateIn, db: DB, ctx
     return await finish(db, ctx, lambda: _full(db, n.id))
 
 
-@router.post("/{note_id}/issue", response_model=Envelope[IssueOut], summary="Issue → central stock − (in transit to site)")
-async def post_issue(note_id: uuid.UUID, body: VersionIn, db: DB, ctx: Perm("issue.post")):
-    n = await get_or_404(db, IssueNote, note_id, "Issue note", lock=True)
-    ensure_covers(ctx, "issue.post", "Issue note", store_ids=(n.from_store_id,))
-    ensure_status(n, IssueStatus.DRAFT, action="issue")
-    check_version(n, body.version)
-    if settings.MAKER_CHECKER_ON_POSTING:
-        maker_checker(n.created_by_id, ctx, "issue")
+async def dispatch_note(db, ctx: UserContext, n: IssueNote) -> None:
+    """Posts a DRAFT note: central stock −, request quantities updated, site notified."""
     r = await get_or_404(db, MaterialRequest, n.request_id, "Request", lock=True)
     ensure_status(r, RfqStatus.STORE_APPROVED, RfqStatus.PARTIALLY_ISSUED, action="issue against this request")
     req_items = {i.id: i for i in r.items}
@@ -416,6 +403,15 @@ async def post_issue(note_id: uuid.UUID, body: VersionIn, db: DB, ctx: Perm("iss
         site_id=n.site_id,
         project_id=n.project_id,
     )
+
+
+@router.post("/{note_id}/issue", response_model=Envelope[IssueOut], summary="Issue → central stock − (in transit to site)")
+async def post_issue(note_id: uuid.UUID, body: VersionIn, db: DB, ctx: Perm("issue.post")):
+    n = await get_or_404(db, IssueNote, note_id, "Issue note", lock=True)
+    ensure_covers(ctx, "issue.post", "Issue note", store_ids=(n.from_store_id,))
+    ensure_status(n, IssueStatus.DRAFT, action="issue")
+    check_version(n, body.version)
+    await dispatch_note(db, ctx, n)
     return await finish(db, ctx, lambda: _full(db, n.id))
 
 

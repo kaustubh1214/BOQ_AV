@@ -6,7 +6,7 @@ from tests.conftest import DEMO_PASSWORD
 STRONG = "Str0ng!Passw0rd"
 
 
-async def _new_user(api, refs, *, role="SITE_ENGINEER", scope_type="SITE", scope_id=None) -> tuple[str, str]:
+async def _new_user(api, refs, *, role="SITE_USER", scope_type="SITE", scope_id=None) -> tuple[str, str]:
     admin = await api.as_("admin")
     roles = {r["code"]: r["id"] for r in await admin.ok("GET", "/admin/roles")}
     email = f"user-{uuid.uuid4().hex[:8]}@avgroup.in"
@@ -24,7 +24,7 @@ async def _new_user(api, refs, *, role="SITE_ENGINEER", scope_type="SITE", scope
 
 
 async def test_web_login_refresh_rotation_and_reuse_detection(client):
-    r = await client.post("/api/v1/auth/login", json={"email": "auditor@avgroup.in", "password": DEMO_PASSWORD})
+    r = await client.post("/api/v1/auth/login", json={"email": "store.manager@avgroup.in", "password": DEMO_PASSWORD})
     assert r.status_code == 200
     first_cookie = r.cookies.get(settings.REFRESH_COOKIE_NAME)
     assert first_cookie and r.json()["data"]["refresh_token"] is None  # never exposed to JS on web
@@ -47,7 +47,8 @@ async def test_web_login_refresh_rotation_and_reuse_detection(client):
 
 async def test_mobile_token_flow(client):
     r = await client.post(
-        "/api/v1/auth/token", json={"email": "auditor@avgroup.in", "password": DEMO_PASSWORD, "platform": "android", "device_name": "Pixel"}
+        "/api/v1/auth/token",
+        json={"email": "store.manager@avgroup.in", "password": DEMO_PASSWORD, "platform": "android", "device_name": "Pixel"},
     )
     data = r.json()["data"]
     assert data["refresh_token"]
@@ -115,19 +116,18 @@ async def test_no_privilege_escalation(api, refs):
     admin = await api.as_("admin")
     roles = {r["code"]: r["id"] for r in await admin.ok("GET", "/admin/roles")}
     # A custom role may not include permissions the creator lacks; system roles are immutable.
-    r = await admin.put(f"/admin/roles/{roles['SITE_ENGINEER']}/permissions", json={"permissions": ["users.manage"]})
+    r = await admin.put(f"/admin/roles/{roles['SITE_USER']}/permissions", json={"permissions": ["users.manage"]})
     assert r.status_code == 409 and r.json()["error"]["code"] == "SYSTEM_ROLE"
     # Admin cannot change their own assignments.
     me = await admin.ok("GET", "/me")
     r = await admin.put(f"/admin/users/{me['id']}/assignments", json=[])
     assert r.status_code == 403
-    # Non-admins can't reach user management at all.
-    for who in ("store_manager", "director", "site_a"):
-        assert (await (await api.as_(who)).get("/admin/users")).status_code == 403
+    # Site Users can't reach user management at all.
+    assert (await (await api.as_("site_a")).get("/admin/users")).status_code == 403
 
 
 async def test_audit_trail_records_changes(api):
-    auditor = await api.as_("auditor")
-    logs = await auditor.ok("GET", "/admin/audit-logs?entity_type=grn&limit=20")
+    manager = await api.as_("store_manager")
+    logs = await manager.ok("GET", "/admin/audit-logs?entity_type=grn&limit=20")
     assert {"CREATE", "POST"} <= {x["action"] for x in logs}
     assert all(x["user_name"] for x in logs if x["action"] == "POST")

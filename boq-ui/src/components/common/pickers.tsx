@@ -14,6 +14,7 @@ export interface PickedMaterial {
   code: string;
   name: string;
   uom: string;
+  uom_id?: string;
 }
 
 /** Searchable material picker — a bottom sheet on phones, a dialog on desktop. */
@@ -67,7 +68,7 @@ export function MaterialPicker({
                 <button
                   type="button"
                   onClick={() => {
-                    onChange({ id: m.id, code: m.code, name: m.name, uom: m.base_uom.code ?? "" });
+                    onChange({ id: m.id, code: m.code, name: m.name, uom: m.base_uom.code ?? "", uom_id: m.base_uom.id });
                     setOpen(false);
                   }}
                   className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left hover:bg-accent"
@@ -121,6 +122,83 @@ export function MasterSelect({
       {(data?.data ?? []).map((x) => (
         <option key={x.id} value={x.id}>
           {label(x)}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
+export interface UnitOption {
+  id: string; // "" = the material's base unit
+  code: string;
+  factor: number; // 1 of this unit = factor base units
+}
+
+/** Base unit first (the default), then every unit that has a conversion for this material. */
+export function useUnitOptions(material: PickedMaterial | null): UnitOption[] {
+  const { data: uoms } = useQuery({
+    queryKey: ["master-select", "uoms", undefined],
+    queryFn: () => get<{ id: string; code?: string; name: string }[]>("/masters/uoms", { limit: 500 }),
+    staleTime: 60_000,
+    enabled: !!material,
+  });
+  const { data: convs } = useQuery({
+    queryKey: ["uom-conversions-all"],
+    queryFn: () => get<{ material_id: string | null; from_uom_id: string; to_uom_id: string; factor: number }[]>("/masters/uom-conversions", { limit: 500 }),
+    staleTime: 60_000,
+    enabled: !!material,
+  });
+  if (!material) return [];
+  const list = uoms?.data ?? [];
+  const baseId = material.uom_id ?? list.find((u) => u.code === material.uom)?.id;
+  const out: UnitOption[] = [{ id: "", code: material.uom, factor: 1 }];
+  if (!baseId) return out;
+  const code = (id: string) => list.find((u) => u.id === id)?.code ?? "?";
+  const seen = new Map<string, { opt: UnitOption; own: boolean }>();
+  for (const c of convs?.data ?? []) {
+    if (c.material_id && c.material_id !== material.id) continue;
+    const own = !!c.material_id;
+    let alt: string | null = null;
+    let factor = 0;
+    if (c.to_uom_id === baseId) {
+      alt = c.from_uom_id;
+      factor = Number(c.factor);
+    } else if (c.from_uom_id === baseId) {
+      alt = c.to_uom_id;
+      factor = 1 / Number(c.factor);
+    }
+    if (!alt || alt === baseId) continue;
+    const prev = seen.get(alt);
+    if (!prev || (own && !prev.own)) seen.set(alt, { opt: { id: alt, code: code(alt), factor: Number(factor.toFixed(6)) }, own });
+  }
+  return [...out, ...[...seen.values()].map((s) => s.opt)];
+}
+
+/** Unit dropdown for a document line: defaults to the material's base unit, switchable when conversions exist. */
+export function UnitSelect({
+  material,
+  value,
+  onChange,
+  className,
+}: {
+  material: PickedMaterial | null;
+  value: string;
+  onChange: (uomId: string, factor: number) => void;
+  className?: string;
+}) {
+  const options = useUnitOptions(material);
+  if (!material) return null;
+  return (
+    <Select
+      value={value}
+      disabled={options.length < 2}
+      onChange={(e) => onChange(e.target.value, options.find((o) => o.id === e.target.value)?.factor ?? 1)}
+      className={className}
+      aria-label="Unit"
+    >
+      {options.map((o) => (
+        <option key={o.id} value={o.id}>
+          {o.code}
         </option>
       ))}
     </Select>

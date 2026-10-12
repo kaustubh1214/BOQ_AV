@@ -326,7 +326,7 @@ async def _project_material_cost(db, ctx, p, scope):
     key="rfq-turnaround",
     title="RFQ turnaround",
     level="management",
-    description="Hours from submission to PM approval, store approval and first issue.",
+    description="Hours from submission to Store Manager approval and to first issue.",
     filters=["date_from", "date_to", "project_id", "site_id"],
     requires=("rfq.read",),
     columns=[
@@ -335,19 +335,12 @@ async def _project_material_cost(db, ctx, p, scope):
         Col("priority", "Priority"),
         Col("status", "Status"),
         Col("submitted_at", "Submitted", "datetime"),
-        Col("hours_to_pm", "Hrs → PM approval", "qty"),
-        Col("hours_to_store", "Hrs → store approval", "qty"),
+        Col("hours_to_store", "Hrs → approval", "qty"),
         Col("hours_to_issue", "Hrs → first issue", "qty"),
     ],
 )
 async def _rfq_turnaround(db, ctx, p, scope):
     M = MaterialRequest
-    pm = (
-        select(Approval.entity_id, func.min(Approval.acted_at).label("at"))
-        .where(Approval.entity_type == "rfq", Approval.stage == "PROJECT_MANAGER", Approval.action == "APPROVED")
-        .group_by(Approval.entity_id)
-        .subquery()
-    )
     st = (
         select(Approval.entity_id, func.min(Approval.acted_at).label("at"))
         .where(Approval.entity_type == "rfq", Approval.stage == "STORE", Approval.action == "APPROVED")
@@ -361,12 +354,10 @@ async def _rfq_turnaround(db, ctx, p, scope):
             M.priority,
             M.status,
             M.submitted_at,
-            pm.c.at.label("pm_at"),
             st.c.at.label("st_at"),
             M.first_issued_at,
         )
         .join(Site, Site.id == M.site_id)
-        .outerjoin(pm, pm.c.entity_id == M.id)
         .outerjoin(st, st.c.entity_id == M.id)
         .where(M.submitted_at.is_not(None), M.request_date.between(p.date_from, p.date_to), _site_scope(scope, M.site_id, M.project_id))
         .order_by(M.submitted_at.desc())
@@ -386,7 +377,6 @@ async def _rfq_turnaround(db, ctx, p, scope):
             "priority": r.priority,
             "status": r.status,
             "submitted_at": r.submitted_at,
-            "hours_to_pm": hrs(r.submitted_at, r.pm_at),
             "hours_to_store": hrs(r.submitted_at, r.st_at),
             "hours_to_issue": hrs(r.submitted_at, r.first_issued_at),
         }

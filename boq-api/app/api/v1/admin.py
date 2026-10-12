@@ -153,16 +153,36 @@ async def _user_out(db, user: User) -> UserOut:
     return out
 
 
+SUPER_ADMIN, STORE_MANAGER, SITE_USER = "SUPER_ADMIN", "STORE_MANAGER", "SITE_USER"
+
+
+def _actor_is_super(ctx: UserContext) -> bool:
+    return SUPER_ADMIN in ctx.role_codes
+
+
+def _holds(user: User, role_code: str) -> bool:
+    return any(a.role.code == role_code for a in user.assignments)
+
+
+def _site_user_only(user: User) -> bool:
+    return all(a.role.code == SITE_USER for a in user.assignments)
+
+
 async def _validate_assignments(db, ctx: UserContext, items: list[AssignmentIn]) -> list[Role]:
     roles = []
     for a in items:
         role = await db.get(Role, a.role_id)
         if role is None:
             raise AppError("INVALID_REFERENCE", "Role not found", 422)
-        # No privilege escalation: you can only hand out permissions you hold yourself.
-        missing = {rp.permission_code for rp in role.permissions} - ctx.permissions
-        if missing:
-            raise forbidden(f"You cannot assign role {role.name}: it grants permissions you don't have")
+        if role.code == SUPER_ADMIN:
+            raise AppError("SINGLE_SUPER_ADMIN", "There is exactly one Super Admin account; it cannot be assigned to anyone else", 409)
+        if _actor_is_super(ctx):
+            # No privilege escalation: you can only hand out permissions you hold yourself.
+            missing = {rp.permission_code for rp in role.permissions} - ctx.permissions
+            if missing:
+                raise forbidden(f"You cannot assign role {role.name}: it grants permissions you don't have")
+        elif role.code != SITE_USER or a.scope_type != ScopeType.SITE:
+            raise forbidden("Store Managers can only create Site Users (role Site User, scoped to a site)")
         if a.scope_type == ScopeType.GLOBAL:
             if a.scope_id is not None:
                 raise AppError("VALIDATION_ERROR", "GLOBAL scope must not have a scope_id", 422)
@@ -174,8 +194,17 @@ async def _validate_assignments(db, ctx: UserContext, items: list[AssignmentIn])
     return roles
 
 
-async def _load_user(db, user_id: uuid.UUID) -> User:
-    return await get_or_404(db, User, user_id, "User")
+async def _load_user(db, user_id: uuid.UUID, ctx: UserContext | None = None) -> User:
+    user = await get_or_404(db, User, user_id, "User")
+    if ctx is not None and not _actor_is_super(ctx) and _holds(user, SUPER_ADMIN):
+        raise AppError("NOT_FOUND", "User not found", 404)  # the Super Admin is invisible to everyone else
+    return user
+
+
+def _ensure_manageable(ctx: UserContext, user: User) -> None:
+    """Store Managers manage Site Users only; the Super Admin manages everyone."""
+    if not _actor_is_super(ctx) and not _site_user_only(user):
+        raise forbidden("Only the Super Admin can change Store Manager accounts")
 
 
 # ------------------------------------------------------------------ users
@@ -184,6 +213,9 @@ async def _load_user(db, user_id: uuid.UUID) -> User:
 @router.get("/users", response_model=PageEnvelope[UserOut])
 async def list_users(db: DB, ctx: Perm("users.manage"), paging: PagingDep, q: str | None = None, active: bool | None = None):
     stmt = select(User)
+    if not _actor_is_super(ctx):
+        super_ids = select(UserRoleAssignment.user_id).join(Role, Role.id == UserRoleAssignment.role_id).where(Role.code == SUPER_ADMIN)
+        stmt = stmt.where(User.id.not_in(super_ids))
     if q:
         like = f"%{q.strip()}%"
         stmt = stmt.where(or_(User.name.ilike(like), User.email.ilike(like)))
@@ -217,19 +249,20 @@ async def create_user(body: UserCreateIn, db: DB, ctx: Perm("users.manage")):
     await audit(db, ctx, "CREATE", "user", user.id, f"Created user {email}", None, snapshot(user))
     await db.commit()
     db.expunge_all()
-    return respond(ctx, await _user_out(db, await _load_user(db, user.id)))
+    return respond(ctx, await _user_out(db, await _load_user(db, user.id, ctx)))
 
 
 @router.get("/users/{user_id}", response_model=Envelope[UserOut])
 async def get_user(user_id: uuid.UUID, db: DB, ctx: Perm("users.manage")):
-    return respond(ctx, await _user_out(db, await _load_user(db, user_id)))
+    return respond(ctx, await _user_out(db, await _load_user(db, user_id, ctx)))
 
 
 @router.patch("/users/{user_id}", response_model=Envelope[UserOut])
 async def update_user(user_id: uuid.UUID, body: UserUpdateIn, db: DB, ctx: Perm("users.manage")):
-    user = await _load_user(db, user_id)
-    if user.id == ctx.user_id and body.is_active is False:
-        raise AppError("VALIDATION_ERROR", "You cannot deactivate yourself", 422)
+    user = await _load_user(db, user_id, ctx)
+    _ensure_manageable(ctx, user)
+    if body.is_active is False and (user.id == ctx.user_id or _holds(user, SUPER_ADMIN)):
+        raise AppError("PROTECTED_ACCOUNT", "The Super Admin account cannot be deactivated", 409)
     before = snapshot(user)
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(user, k, v)
@@ -244,7 +277,8 @@ async def update_user(user_id: uuid.UUID, body: UserUpdateIn, db: DB, ctx: Perm(
 async def reset_password(user_id: uuid.UUID, body: ResetPasswordIn, db: DB, ctx: Perm("users.manage")):
     if err := validate_password_strength(body.password):
         raise AppError("WEAK_PASSWORD", err, 422)
-    user = await _load_user(db, user_id)
+    user = await _load_user(db, user_id, ctx)
+    _ensure_manageable(ctx, user)
     user.password_hash = hash_password(body.password)
     user.must_change_password = True
     user.failed_attempts = 0
@@ -259,7 +293,10 @@ async def reset_password(user_id: uuid.UUID, body: ResetPasswordIn, db: DB, ctx:
 async def set_assignments(user_id: uuid.UUID, body: list[AssignmentIn], db: DB, ctx: Perm("users.manage")):
     if user_id == ctx.user_id:
         raise forbidden("You cannot change your own role assignments")
-    user = await _load_user(db, user_id)
+    user = await _load_user(db, user_id, ctx)
+    if _holds(user, SUPER_ADMIN):
+        raise AppError("PROTECTED_ACCOUNT", "The Super Admin's role cannot be changed", 409)
+    _ensure_manageable(ctx, user)
     await _validate_assignments(db, ctx, body)
     before = {"assignments": [f"{a.role.code}:{a.scope_type}:{a.scope_id}" for a in user.assignments]}
     await db.execute(delete(UserRoleAssignment).where(UserRoleAssignment.user_id == user.id))
@@ -268,7 +305,7 @@ async def set_assignments(user_id: uuid.UUID, body: list[AssignmentIn], db: DB, 
     user.token_version += 1  # new permissions take effect on next login/refresh
     await db.flush()
     db.expire(user)
-    user = await _load_user(db, user_id)
+    user = await _load_user(db, user_id, ctx)
     after = {"assignments": [f"{a.role.code}:{a.scope_type}:{a.scope_id}" for a in user.assignments]}
     await audit(db, ctx, "ASSIGN_ROLES", "user", user.id, None, before, after)
     await db.commit()
@@ -302,7 +339,10 @@ async def list_permissions(db: DB, ctx: Perm("roles.manage", "users.manage")):
 
 @router.get("/roles", response_model=Envelope[list[RoleOut]])
 async def list_roles(db: DB, ctx: Perm("roles.manage", "users.manage")):
-    roles = (await db.execute(select(Role).order_by(Role.is_system.desc(), Role.name))).scalars().all()
+    stmt = select(Role).order_by(Role.is_system.desc(), Role.name)
+    if not ctx.has("roles.manage"):
+        stmt = stmt.where(Role.code == SITE_USER)  # Store Managers can only hand out the Site User role
+    roles = (await db.execute(stmt)).scalars().all()
     return respond(ctx, [await _role_out(db, r) for r in roles])
 
 
@@ -317,6 +357,8 @@ async def _check_perm_codes(db, ctx: UserContext, codes: list[str]) -> None:
 
 @router.post("/roles", response_model=Envelope[RoleOut], status_code=201)
 async def create_role(body: RoleIn, db: DB, ctx: Perm("roles.manage")):
+    if body.code in (SUPER_ADMIN, STORE_MANAGER, SITE_USER):
+        raise AppError("DUPLICATE", "That role code is reserved", 409)
     await _check_perm_codes(db, ctx, body.permissions)
     role = Role(id=uuid.uuid4(), code=body.code, name=body.name, description=body.description, default_scope=body.default_scope)
     db.add(role)
@@ -397,3 +439,43 @@ async def audit_logs(
         data.append(o)
     next_cursor = data[-1].id if len(data) == limit else None
     return {"success": True, "data": data, "meta": {"limit": limit, "nextCursor": next_cursor}}
+
+
+# ------------------------------------------------------------------ system (Super Admin only)
+
+
+class SystemOut(Out):
+    environment: str
+    database_ok: bool
+    users_total: int
+    users_active: int
+    users_by_role: dict[str, int]
+    settings: dict[str, str | int | float | bool]
+
+
+@router.get("/system", response_model=Envelope[SystemOut], summary="System overview for the Super Admin")
+async def system_info(db: DB, ctx: Perm("system.manage")):
+    from app.core.config import settings
+
+    total = (await db.execute(select(func.count()).select_from(User))).scalar_one()
+    active = (await db.execute(select(func.count()).select_from(User).where(User.is_active.is_(True)))).scalar_one()
+    rows = await db.execute(
+        select(Role.code, func.count(func.distinct(UserRoleAssignment.user_id)))
+        .join(UserRoleAssignment, UserRoleAssignment.role_id == Role.id)
+        .group_by(Role.code)
+    )
+    return respond(
+        ctx,
+        SystemOut(
+            environment=settings.ENV,
+            database_ok=True,
+            users_total=total,
+            users_active=active,
+            users_by_role={code: n for code, n in rows},
+            settings={
+                "company": settings.COMPANY_NAME,
+                "timezone": settings.TIMEZONE,
+                "grn_tolerance_pct": float(settings.GRN_TOLERANCE_PCT),
+            },
+        ),
+    )

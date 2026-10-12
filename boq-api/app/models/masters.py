@@ -20,6 +20,10 @@ class MaterialCategory(UUIDPk, Timestamps, Authored, Versioned, Base):
     code: Mapped[str] = mapped_column(String(30), unique=True)
     name: Mapped[str] = mapped_column(String(120))
     parent_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("material_categories.id"))
+    # Pre-fill the "new material" form when this category is picked (all editable there).
+    default_uom_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("uoms.id"))
+    default_hsn_code: Mapped[str | None] = mapped_column(String(12))
+    default_gst_rate: Mapped[Decimal | None] = mapped_column(PCT)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
 

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { type Column, DataList, Pager } from "@/components/common/data-list";
 import { ActionBar, EmptyState, ErrorState, InfoGrid, LoadingRows, PageHeader, Section, StatusBadge } from "@/components/common/page";
-import { MasterSelect, MaterialPicker, type PickedMaterial } from "@/components/common/pickers";
+import { MasterSelect, MaterialPicker, type PickedMaterial, UnitSelect } from "@/components/common/pickers";
 import { Attachments, ConfirmAction, QtyInput } from "@/components/common/widgets";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -63,14 +63,13 @@ export function GrnListPage() {
 
 export function GrnDetailPage() {
   const { id } = useParams();
-  const { can, me } = useAuth();
+  const { can } = useAuth();
   const { data: g, isLoading, error } = useOne<Grn>("grn", `/grns/${id}`);
   const inv = ["grn", "grns"];
   const postIt = useAction(() => post(`/grns/${id}/post`, { version: g!.version }), { success: "GRN posted — central stock updated", invalidate: inv });
   const cancel = useAction((reason: string) => post(`/grns/${id}/cancel`, { version: g!.version, reason }), { success: "GRN cancelled", invalidate: inv });
   if (isLoading) return <LoadingRows />;
   if (error || !g) return <ErrorState error={error} />;
-  const isMaker = g.created_by_id === me?.id;
   const cols: Column<Grn["items"][number]>[] = [
     { key: "m", header: "Material", cell: (i) => <div><p className="font-medium">{i.material.name}</p>{i.rejection_reason && <p className="text-xs text-destructive">Rejected: {i.rejection_reason}</p>}</div> },
     { key: "r", header: "Received", align: "right", cell: (i) => `${fmtQty(i.received_qty)} ${i.material.uom}` },
@@ -111,7 +110,7 @@ export function GrnDetailPage() {
                 label="Post to stock"
                 variant="success"
                 title="Post GRN?"
-                description={isMaker ? "Maker-checker: a different user must post a GRN you prepared." : "Accepted quantities are added to central stock and counted against the BOQ."}
+                description={"Accepted quantities are added to central stock and counted against the BOQ."}
                 onConfirm={() => postIt.mutateAsync(undefined)}
               />
             )}
@@ -153,8 +152,10 @@ interface Line {
   rejected_qty: string;
   rate: string;
   rejection_reason: string;
+  uom_id: string;
+  factor: number;
 }
-const blank = (): Line => ({ key: crypto.randomUUID(), material: null, received_qty: "", rejected_qty: "", rate: "", rejection_reason: "" });
+const blank = (): Line => ({ key: crypto.randomUUID(), material: null, received_qty: "", rejected_qty: "", rate: "", rejection_reason: "", uom_id: "", factor: 1 });
 
 export function GrnFormPage() {
   const { id } = useParams();
@@ -183,7 +184,7 @@ export function GrnFormPage() {
     setChallan(existing.challan_no ?? "");
     setVehicle(existing.vehicle_no ?? "");
     setRemarks(existing.remarks ?? "");
-    setLines(existing.items.map((i) => ({ key: i.id, material: i.material, received_qty: String(i.received_qty), rejected_qty: String(i.rejected_qty || ""), rate: String(i.rate ?? ""), rejection_reason: i.rejection_reason ?? "" })));
+    setLines(existing.items.map((i) => ({ key: i.id, material: i.material, received_qty: String(i.received_qty), rejected_qty: String(i.rejected_qty || ""), rate: String(i.rate ?? ""), rejection_reason: i.rejection_reason ?? "", uom_id: "", factor: 1 })));
   }, [existing]);
 
   const update = (key: string, p: Partial<Line>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...p } : l)));
@@ -202,6 +203,7 @@ export function GrnFormPage() {
           received_qty: Number(l.received_qty),
           rejected_qty: Number(l.rejected_qty || 0),
           rate: Number(l.rate),
+          uom_id: l.uom_id || null,
           rejection_reason: l.rejection_reason || null,
         })),
       };
@@ -248,15 +250,28 @@ export function GrnFormPage() {
               return (
                 <li key={l.key} className="grid gap-3 p-4 sm:grid-cols-2 md:px-5 lg:grid-cols-[2fr_1fr_1fr_1fr_auto] lg:items-end">
                   <Field label={`${idx + 1}. Material (from BOQ)`} hint={p ? `BOQ rate ₹${p.estimated_rate ?? "—"} · planned ${fmtQty(p.planned_qty)} ${p.material.uom}` : undefined} className="sm:col-span-2 lg:col-span-1">
-                    <MaterialPicker value={l.material} onChange={(m) => update(l.key, { material: m, rate: l.rate || String(plannedBy[m.id]?.estimated_rate ?? "") })} restrictTo={planned} />
+                    <MaterialPicker value={l.material} onChange={(m) => update(l.key, { material: m, uom_id: "", factor: 1, rate: l.rate || String(plannedBy[m.id]?.estimated_rate ?? "") })} restrictTo={planned} />
                   </Field>
-                  <Field label={`Received${l.material ? ` (${l.material.uom})` : ""}`}>
-                    <QtyInput value={l.received_qty} onChange={(e) => update(l.key, { received_qty: e.target.value })} />
+                  <Field label="Received">
+                    <div className="flex gap-2">
+                      <QtyInput value={l.received_qty} onChange={(e) => update(l.key, { received_qty: e.target.value })} />
+                      <UnitSelect
+                        material={l.material}
+                        value={l.uom_id}
+                        className="w-24 shrink-0"
+                        onChange={(uom_id, factor) => {
+                          // keep an auto-filled BOQ rate in step with the unit (rate is per selected unit)
+                          const base = l.material ? Number(plannedBy[l.material.id]?.estimated_rate) : NaN;
+                          const wasAuto = l.rate === "" || Math.abs(Number(l.rate) - base * l.factor) < 1e-6;
+                          update(l.key, { uom_id, factor, ...(wasAuto && !Number.isNaN(base) ? { rate: String(Number((base * factor).toFixed(4))) } : {}) });
+                        }}
+                      />
+                    </div>
                   </Field>
                   <Field label="Rejected">
                     <QtyInput value={l.rejected_qty} onChange={(e) => update(l.key, { rejected_qty: e.target.value })} />
                   </Field>
-                  <Field label="Rate excl. GST (₹)">
+                  <Field label={`Rate excl. GST (₹${l.material ? ` per ${l.uom_id ? "selected unit" : l.material.uom}` : ""})`}>
                     <QtyInput value={l.rate} onChange={(e) => update(l.key, { rate: e.target.value })} />
                   </Field>
                   <div className="flex items-center justify-between gap-2 sm:col-span-2 lg:col-span-1">

@@ -25,7 +25,6 @@ from app.services.common import (
     check_version,
     ensure_status,
     financial_year,
-    maker_checker,
     next_doc_no,
     now_utc,
     q2,
@@ -393,6 +392,10 @@ async def submit_boq(boq_id: uuid.UUID, body: VersionIn, db: DB, ctx: Perm("boq.
     bump(b, ctx)
     await record_approval(db, ctx, "boq", b.id, "SUBMIT", ApprovalAction.SUBMITTED, None)
     await audit(db, ctx, "SUBMIT", "boq", b.id, b.boq_no)
+    if ctx.has("boq.approve"):
+        # The Store Manager both prepares and approves, so submitting goes live in one step.
+        await _approve_core(db, ctx, b, None)
+        return await _respond(db, ctx, b.id)
     await notify(
         db,
         "boq.approve",
@@ -406,13 +409,8 @@ async def submit_boq(boq_id: uuid.UUID, body: VersionIn, db: DB, ctx: Perm("boq.
     return await _respond(db, ctx, b.id)
 
 
-@router.post("/{boq_id}/approve", response_model=Envelope[BoqOut])
-async def approve_boq(boq_id: uuid.UUID, body: CommentIn, db: DB, ctx: Perm("boq.approve")):
-    b = await _load(db, boq_id, lock=True)
-    ensure_status(b, BoqStatus.SUBMITTED, action="approve")
-    check_version(b, body.version)
-    maker_checker(b.created_by_id, ctx)
-    maker_checker(b.submitted_by_id, ctx)
+async def _approve_core(db, ctx: UserContext, b: Boq, comment: str | None) -> None:
+    """Approves a locked SUBMITTED BOQ: supersedes the live one for the year, notifies."""
     live = (
         await db.execute(select(Boq).where(Boq.financial_year == b.financial_year, Boq.status == BoqStatus.APPROVED).with_for_update())
     ).scalar_one_or_none()
@@ -430,7 +428,7 @@ async def approve_boq(boq_id: uuid.UUID, body: CommentIn, db: DB, ctx: Perm("boq
         await audit(db, ctx, "SUPERSEDE", "boq", live.id, f"Superseded by {b.boq_no}")
     b.status, b.approved_by_id, b.approved_at = BoqStatus.APPROVED, ctx.user_id, now_utc()
     bump(b, ctx)
-    await record_approval(db, ctx, "boq", b.id, "MANAGEMENT", ApprovalAction.APPROVED, body.comment)
+    await record_approval(db, ctx, "boq", b.id, "MANAGEMENT", ApprovalAction.APPROVED, comment)
     await audit(db, ctx, "APPROVE", "boq", b.id, b.boq_no)
     await notify(
         db,
@@ -442,6 +440,14 @@ async def approve_boq(boq_id: uuid.UUID, body: CommentIn, db: DB, ctx: Perm("boq
         exclude=ctx.user_id,
         also={b.created_by_id} if b.created_by_id else None,
     )
+
+
+@router.post("/{boq_id}/approve", response_model=Envelope[BoqOut])
+async def approve_boq(boq_id: uuid.UUID, body: CommentIn, db: DB, ctx: Perm("boq.approve")):
+    b = await _load(db, boq_id, lock=True)
+    ensure_status(b, BoqStatus.SUBMITTED, action="approve")
+    check_version(b, body.version)
+    await _approve_core(db, ctx, b, body.comment)
     return await _respond(db, ctx, b.id)
 
 
@@ -452,7 +458,6 @@ async def reject_boq(boq_id: uuid.UUID, body: CommentIn, db: DB, ctx: Perm("boq.
     b = await _load(db, boq_id, lock=True)
     ensure_status(b, BoqStatus.SUBMITTED, action="reject")
     check_version(b, body.version)
-    maker_checker(b.created_by_id, ctx, "reject")
     b.status = BoqStatus.REJECTED
     bump(b, ctx)
     await record_approval(db, ctx, "boq", b.id, "MANAGEMENT", ApprovalAction.REJECTED, body.comment)

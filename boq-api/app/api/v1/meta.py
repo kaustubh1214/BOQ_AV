@@ -40,7 +40,6 @@ class CompanyOut(BaseModel):
     today: str
     timezone: str
     grn_tolerance_pct: float
-    maker_checker_on_posting: bool
 
 
 def _label(v: str) -> str:
@@ -65,6 +64,5 @@ async def company(ctx: Ctx):
             today=today().isoformat(),
             timezone=settings.TIMEZONE,
             grn_tolerance_pct=settings.GRN_TOLERANCE_PCT,
-            maker_checker_on_posting=settings.MAKER_CHECKER_ON_POSTING,
         ),
     )

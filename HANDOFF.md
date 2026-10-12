@@ -1,26 +1,41 @@
 # HANDOFF — AV Group BOQ Management
 
-Status date: 2026-10-09 · Branch `claude/boq-management-plan-732692` · Folder `boq-management/`
+Status date: 2026-10-12 (v2: simplified to three roles) · Branch `claude/boq-management-plan-732692` · Folder `boq-management/`
 Read order for a new person/agent: this file → `AGENTS.md` (rules) → `PLAN.md` (design) → `FORMULAS.md` (every number).
 
 ## What exists (working)
 React web app (mobile-first) + FastAPI + PostgreSQL implementing the full flow from the notebook sketch:
-Market research → BOQ (central store master, approval, revisions, per-project allocation) → GRN inward
-(weighted-average costing, BOQ tolerance) → Site RFQ (PM → Store approval, allocation check/override) →
-Issue note (+ gate-pass PDF with QR) → site receipt (short/damaged) → site stock, daily consumption,
-average/day and days-of-cover → returns → stock adjustments / physical count. Plus: 8-role scoped RBAC,
-audit trail, 20 reports with Excel export, role dashboard, notifications, attachments, idempotency keys,
-optimistic locking, Flutter-ready `/api/v1` (`boq-api/openapi.json`, 100 paths).
+Market research → BOQ (central store master, revisions, per-project allocation) → GRN inward (weighted-average costing,
+BOQ tolerance) → Site request (RFQ) → **Store Manager approves & issues in one step** (+ gate-pass PDF with QR) → site
+receipt (short/damaged) → site stock, daily consumption, average/day and days-of-cover → returns → stock adjustments /
+physical count. Plus: audit trail, 20 reports with Excel export, role dashboard, notifications, attachments, idempotency
+keys, optimistic locking, Flutter-ready `/api/v1` (`boq-api/openapi.json`).
+
+**Roles (v2, after AV Group's review said v1 was too complicated):**
+- **Super Admin** — our IT team, **exactly one** account (seeded from `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD`). DB trigger
+  `trg_single_super_admin` + API refuse a second; cannot be deactivated or re-assigned; hidden from Store Managers.
+  Owns roles & permissions and the System page; creates Store Managers.
+- **Store Manager** — AV Group's company admin and the keeper of the central ledger: masters, sites/projects, vendors,
+  market research, BOQ (create + approve), GRN (draft + post), approve/reject/issue requests, returns, adjustments, all
+  reports with ₹ + Excel, audit trail, and creates/edits **Site Users** only.
+- **Site User** — one or more per site; own site only; no ₹ values.
+Removed: Director, Procurement, Store Keeper, Project Manager, Auditor and the PM approval step. There is **no two-person rule**: the Store Manager can prepare, approve and post everything.
+
+**Recover the Super Admin** (lost password / locked): on the server run
+`docker exec -it av-boq-api python -m app.cli reset-superadmin` (or `python -m app.cli reset-superadmin` in `boq-api/`).
 
 ## Verification actually done
-- Backend: **218 pytest tests pass** (real Postgres `boq_test`): worked example from the sketch, full role×endpoint
-  RBAC matrix, scope isolation, maker-checker, tolerance, concurrency (8 parallel consumptions → no negative
-  stock), append-only ledger trigger, idempotency, auth (rotation/reuse detection/lockout/rate limit), exports, PDF.
-- `ruff` clean; `pip-audit` and `npm audit` clean after upgrading FastAPI 0.143 / Starlette 1.7 / PyJWT 2.15.1.
-- UI: `tsc` + `vite build` clean. Checked in the in-app browser at 375px and 1280px: no sideways scroll on ~20
-  routes; login, raise RFQ, PM approval (reduced qty), dialogs verified; strict CSP → zero violations.
-- **Not done:** Playwright e2e, Locust load test, screenshots (pane was not visible), gate-pass PDF rendered
-  visually in-browser (bytes verified only). Reports query live (no materialized views yet).
+- Backend: **pytest suite passes** against real Postgres `boq_test`: worked example from the sketch, role × endpoint RBAC
+  matrix (3 roles), scope isolation, single-Super-Admin rules (API + DB trigger), Store Manager limits, one-step
+  Approve & issue incl. atomic rollback on short stock, tolerance, concurrency, append-only ledger, idempotency, auth
+  (rotation/reuse detection/lockout/rate limit), exports, PDF, Super Admin CLI.
+  Note: `test_concurrent_consumption_never_goes_negative` opens 8 parallel DB connections and is occasionally flaky on
+  Docker Desktop for Windows (`ConnectionResetError` while connecting); it passes on re-run.
+- `ruff` clean; `tsc` clean. Upgrade path from the v1 database verified (migration + seed retire old roles, deactivate
+  their users, convert Store Managers to global scope).
+- UI checked in the in-app browser: Store Manager approve-and-issue, Users page (Super Admin hidden, Site-User-only form),
+  Super Admin System page.
+- **Not done:** Playwright e2e, Locust load test, gate-pass PDF visual check. Reports query live (no materialized views).
 
 ## Run it
 Ports: Postgres 5436, Redis 6380, API 8100, UI 3100. Config in `boq-management/.env` (git-ignored; copy `.env.example`).
@@ -28,20 +43,20 @@ Ports: Postgres 5436, Redis 6380, API 8100, UI 3100. Config in `boq-management/.
 docker compose up -d --build        # UI :3100, API :8100/docs (docs off when ENV=production)
 # host dev: see AGENTS.md → Commands. Demo data: python -m app.seed --demo (in boq-api)
 ```
-Demo logins (emails; password = `DEMO_PASSWORD` in `.env`, admin = `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD`):
-director@, procurement@, store.manager@, store.keeper@, pm.heights@, pm.greens@, site.towera@, site.towerb@,
-site.phase1@, auditor@ `avgroup.in`. The dev DB also holds RFQ/2026-27/0004 (PM-approved) created during UI testing.
-Containers seed only base data (roles, UOMs, central store, admin); demo data is host-run only.
+Demo logins (emails; password = `DEMO_PASSWORD` in `.env`, Super Admin = `SEED_ADMIN_EMAIL`/`SEED_ADMIN_PASSWORD`):
+`superadmin@avgroup.in`, `store.manager@`, `site.towera@`, `site.towerb@`, `site.phase1@` `avgroup.in`.
+Containers seed only base data (roles, UOMs, central store, the Super Admin); demo data is host-run only
+(`python -m app.seed --demo` in `boq-api`).
 
 ## Decisions taken for the open questions (change if wrong)
 One central BOQ per FY with optional project/site allocations · no Purchase Orders (`grns.po_id` reserved) · UI label
-"Requests (RFQ)" · approval chain Site → PM → Store · sites hold stock and log daily consumption · GST captured on
+"Requests (RFQ)" · approval chain Site User → Store Manager (one-step Approve & issue) · sites hold stock and log daily consumption · GST captured on
 GRN, excluded from valuation · "(AU)" in the sketch treated as audit/approval · single company, UUID keys · in-app
 notifications only (email off).
 
 ## Deviations from PLAN.md
 No materialized views; no TanStack Table/React-Hook-Form/Zod (plain state + custom `DataList`); approval chain is
-code, not an `approval_rules` table; version sent in body (not `If-Match`); attachments on local disk (not S3
+code, not an `approval_rules` table; `PM_APPROVED` status kept in the enum only for old data; version sent in body (not `If-Match`); attachments on local disk (not S3
 presigned); uvicorn workers (no gunicorn); delta sync (`updated_since`) on masters only.
 
 ## Gotchas already solved

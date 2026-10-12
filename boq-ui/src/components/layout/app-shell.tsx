@@ -19,6 +19,7 @@ import {
   ScanLine,
   Scale,
   Search,
+  Server,
   Shield,
   Sun,
   Truck,
@@ -61,10 +62,10 @@ const NAV: { group: string; items: NavItem[] }[] = [
     group: "Central store",
     items: [
       { to: "/grns", label: "Inward (GRN)", icon: ArrowDownToLine, perms: ["grn.read"] },
-      { to: "/rfqs", label: "Requests (RFQ)", icon: ClipboardList, perms: ["rfq.read"] },
+      { to: "/rfqs", label: "Site requests (RFQ)", icon: ClipboardList, perms: ["rfq.read"] },
       { to: "/issue-notes", label: "Issue notes", icon: Truck, perms: ["issue.read"] },
       { to: "/returns", label: "Returns", icon: Undo2, perms: ["site.read", "return.receive"] },
-      { to: "/stock", label: "Stock & ledger", icon: Boxes, perms: ["stock.read"] },
+      { to: "/stock", label: "Central stock & ledger", icon: Boxes, perms: ["stock.read"] },
       { to: "/adjustments", label: "Adjustments", icon: Scale, perms: ["adjustment.create", "adjustment.approve"] },
     ],
   },
@@ -81,8 +82,9 @@ const NAV: { group: string; items: NavItem[] }[] = [
     items: [
       { to: "/masters", label: "Masters", icon: Database, perms: ["masters.read"] },
       { to: "/admin/users", label: "Users", icon: Users, perms: ["users.manage"] },
-      { to: "/admin/roles", label: "Roles & permissions", icon: Shield, perms: ["roles.manage", "users.manage"] },
+      { to: "/admin/roles", label: "Roles & permissions", icon: Shield, perms: ["roles.manage"] },
       { to: "/admin/audit", label: "Audit trail", icon: History, perms: ["audit.read"] },
+      { to: "/admin/system", label: "System", icon: Server, perms: ["system.manage"] },
     ],
   },
 ];

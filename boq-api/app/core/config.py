@@ -40,7 +40,6 @@ class Settings(BaseSettings):
     DEMO_PASSWORD: str | None = None
 
     GRN_TOLERANCE_PCT: float = 5.0
-    MAKER_CHECKER_ON_POSTING: bool = True
 
     UPLOAD_DIR: str = "./uploads"
     MAX_UPLOAD_MB: int = 10

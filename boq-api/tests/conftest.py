@@ -27,17 +27,11 @@ ADMIN_EMAIL = (_env.get("SEED_ADMIN_EMAIL") or "").lower()
 ADMIN_PASSWORD = _env.get("SEED_ADMIN_PASSWORD")
 
 USERS = {
-    "admin": ADMIN_EMAIL,
-    "director": "director@avgroup.in",
-    "procurement": "procurement@avgroup.in",
+    "admin": ADMIN_EMAIL,  # the one Super Admin
     "store_manager": "store.manager@avgroup.in",
-    "store_keeper": "store.keeper@avgroup.in",
-    "pm_heights": "pm.heights@avgroup.in",
-    "pm_greens": "pm.greens@avgroup.in",
     "site_a": "site.towera@avgroup.in",
     "site_b": "site.towerb@avgroup.in",
     "site_p1": "site.phase1@avgroup.in",
-    "auditor": "auditor@avgroup.in",
 }
 
 
@@ -151,12 +145,11 @@ async def refs(api):
 @pytest.fixture
 async def plan(api, refs):
     """Factory: create fresh materials and put them into the approved BOQ via a revision
-    (store manager revises/submits, director approves). Returns {name: material_id}."""
+    (the Store Manager revises and submits; submitting approves). Returns {name: material_id}."""
 
     async def _plan(lines: list[dict]) -> dict[str, str]:
         admin = await api.as_("admin")
         sm = await api.as_("store_manager")
-        director = await api.as_("director")
         ids = {}
         for ln in lines:
             code = f"T-{ln['name'][:10].upper()}-{uuid.uuid4().hex[:6]}"
@@ -196,8 +189,8 @@ async def plan(api, refs):
                 }
             )
         rev = await sm.ok("PUT", f"/boqs/{rev['id']}", json={"title": rev["title"], "items": items, "version": rev["version"]})
-        rev = await sm.ok("POST", f"/boqs/{rev['id']}/submit", json={"version": rev["version"]})
-        await director.ok("POST", f"/boqs/{rev['id']}/approve", json={"version": rev["version"]})
+        rev = await sm.ok("POST", f"/boqs/{rev['id']}/submit", json={"version": rev["version"]})  # Store Manager: submit = approve
+        assert rev["status"] == "APPROVED"
         return ids
 
     return _plan

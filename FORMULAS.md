@@ -72,7 +72,7 @@ GST is captured on the GRN (`gst_amount = amount × gst_rate / 100`) but **not**
 | Receipt rule | `received + shortage + damaged = issued` for every line |
 | Transit loss % | `(shortage + damaged) / issued × 100` |
 | Transit loss value | `(shortage + damaged) × issue rate` |
-| RFQ turnaround (hours) | `first PM approval − submitted`, `first store approval − submitted`, `first issue − submitted` |
+| RFQ turnaround (hours) | `first Store Manager approval − submitted`, `first issue − submitted` |
 
 **Project allocation check (store approval):**
 `remaining = allocated(project, material) − approved in other live requests of the FY − this request's approved qty`.

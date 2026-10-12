@@ -12,7 +12,7 @@ from sqlalchemy import inspect, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.errors import AppError, forbidden, invalid_state
+from app.core.errors import AppError, invalid_state
 from app.models import Approval, AuditLog, Material, UomConversion
 from app.services.context import UserContext
 from app.services.permissions import FINANCE_FIELDS
@@ -164,11 +164,6 @@ def bump(doc: Any, ctx: UserContext) -> None:
     doc.version = (doc.version or 0) + 1
     if hasattr(doc, "updated_by_id"):
         doc.updated_by_id = ctx.user_id
-
-
-def maker_checker(maker_id: uuid.UUID | None, ctx: UserContext, what: str = "approve") -> None:
-    if maker_id is not None and maker_id == ctx.user_id:
-        raise forbidden(f"Maker-checker: you cannot {what} a document you prepared")
 
 
 # ------------------------------------------------------------------ UOM

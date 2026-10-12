@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { KeyRound, Plus, Shield, Trash2, UserPlus } from "lucide-react";
-import { Fragment, useState } from "react";
+import { KeyRound, Lock, Plus, Shield, Trash2, UserPlus } from "lucide-react";
+import { Fragment, useEffect, useState } from "react";
 import { type Column, DataList, Pager } from "@/components/common/data-list";
 import { EmptyState, PageHeader, StatusBadge } from "@/components/common/page";
 import { MasterSelect } from "@/components/common/pickers";
@@ -52,6 +52,7 @@ interface Perm {
 }
 
 export function UsersPage() {
+  const { can } = useAuth();
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const dq = useDebounced(q);
@@ -76,7 +77,7 @@ export function UsersPage() {
   ];
   return (
     <>
-      <PageHeader title="Users" subtitle="Each user gets roles scoped to the whole company, a project, a site or a store" actions={<Button onClick={() => setEditing("new")}><UserPlus /> New user</Button>} />
+      <PageHeader title="Users" subtitle={can("roles.manage") ? "Store Managers and Site Users. There is exactly one Super Admin." : "Create and manage Site Users, one or more per site"} actions={<Button onClick={() => setEditing("new")}><UserPlus /> New user</Button>} />
       <Input placeholder="Search name or email" value={q} onChange={(e) => (setQ(e.target.value), setPage(1))} className="mb-3 sm:max-w-sm" />
       <Card className="overflow-hidden">
         <DataList rows={data?.data} columns={cols} rowKey={(u) => u.id} loading={isLoading} onRowClick={(u) => setEditing(u)} />
@@ -87,15 +88,17 @@ export function UsersPage() {
   );
 }
 
-function ScopePicker({ type, value, onChange }: { type: string; value: string; onChange: (v: string) => void }) {
+function ScopePicker({ type, value, onChange, disabled }: { type: string; value: string; onChange: (v: string) => void; disabled?: boolean }) {
   if (type === "GLOBAL") return <Input value="Whole company" disabled />;
+  if (disabled) return <Input value="Fixed" disabled />;
   const path = { PROJECT: "projects", SITE: "sites", STORE: "stores" }[type]!;
   return <MasterSelect path={path} value={value} onChange={onChange} placeholder={`Select ${type.toLowerCase()}`} />;
 }
 
 function UserDialog({ user, onClose }: { user: User | null; onClose: () => void }) {
-  const { me } = useAuth();
+  const { me, can } = useAuth();
   const { data: roles } = useQuery({ queryKey: ["roles"], queryFn: async () => (await get<Role[]>("/admin/roles")).data });
+  const restricted = !can("roles.manage"); // Store Managers: Site Users only, always tied to one site
   const [name, setName] = useState(user?.name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
   const [phone, setPhone] = useState(user?.phone ?? "");
@@ -115,8 +118,15 @@ function UserDialog({ user, onClose }: { user: User | null; onClose: () => void 
   );
   const toggle = useAction(() => patch(`/admin/users/${user!.id}`, { is_active: !user!.is_active }), { success: user?.is_active ? "User disabled" : "User enabled", invalidate: inv, onSuccess: onClose });
   const reset = useAction(() => post(`/admin/users/${user!.id}/reset-password`, { password }), { success: "Password reset — user must change it at next login", invalidate: inv, onSuccess: onClose });
+  const isSuper = !!user?.assignments.some((a) => a.role_code === "SUPER_ADMIN");
   const self = user?.id === me?.id;
   const roleById = Object.fromEntries((roles ?? []).map((r) => [r.id, r]));
+  // Store Managers may only change Site Users; Store Manager / Super Admin accounts are read-only to them.
+  const locked = isSuper || (restricted && !!user && user.assignments.some((a) => a.role_code !== "SITE_USER"));
+  const siteUserRole = (roles ?? []).find((r) => r.code === "SITE_USER");
+  useEffect(() => {
+    if (restricted && !user && siteUserRole && assignments.length === 0) setAssignments([{ role_id: siteUserRole.id, scope_type: "SITE", scope_id: null }]);
+  }, [restricted, user, siteUserRole, assignments.length]);
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -132,10 +142,17 @@ function UserDialog({ user, onClose }: { user: User | null; onClose: () => void 
         <div className="grid gap-2">
           <p className="text-sm font-medium">Roles</p>
           {self && <p className="text-xs text-muted-foreground">You can't change your own roles.</p>}
+          {isSuper && (
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Lock className="size-3" /> The Super Admin account is protected: it can't be disabled, re-assigned or duplicated.
+            </p>
+          )}
+          {!isSuper && locked && <p className="text-xs text-muted-foreground">Only the Super Admin can change this account.</p>}
+          {restricted && !user && <p className="text-xs text-muted-foreground">New users are Site Users: pick the site they work at.</p>}
           {assignments.map((a, i) => (
             <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2">
               <Select
-                disabled={self}
+                disabled={self || locked || restricted}
                 value={a.role_id}
                 onChange={(e) => {
                   const r = roleById[e.target.value];
@@ -146,27 +163,27 @@ function UserDialog({ user, onClose }: { user: User | null; onClose: () => void 
                 {(roles ?? []).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
               </Select>
               <div className="grid grid-cols-[6.5rem_1fr] gap-2">
-                <Select disabled={self} value={a.scope_type} onChange={(e) => setAssignments((s) => s.map((x, xi) => (xi === i ? { ...x, scope_type: e.target.value, scope_id: null } : x)))}>
+                <Select disabled={self || locked || restricted} value={a.scope_type} onChange={(e) => setAssignments((s) => s.map((x, xi) => (xi === i ? { ...x, scope_type: e.target.value, scope_id: null } : x)))}>
                   {["GLOBAL", "PROJECT", "SITE", "STORE"].map((t) => <option key={t} value={t}>{humanize(t)}</option>)}
                 </Select>
-                <ScopePicker type={a.scope_type} value={a.scope_id ?? ""} onChange={(v) => setAssignments((s) => s.map((x, xi) => (xi === i ? { ...x, scope_id: v } : x)))} />
+                <ScopePicker type={a.scope_type} disabled={locked} value={a.scope_id ?? ""} onChange={(v) => setAssignments((s) => s.map((x, xi) => (xi === i ? { ...x, scope_id: v } : x)))} />
               </div>
-              <Button variant="ghost" size="icon" disabled={self} aria-label="Remove role" onClick={() => setAssignments((s) => s.filter((_, xi) => xi !== i))}><Trash2 /></Button>
+              <Button variant="ghost" size="icon" disabled={self || locked || restricted} aria-label="Remove role" onClick={() => setAssignments((s) => s.filter((_, xi) => xi !== i))}><Trash2 /></Button>
             </div>
           ))}
-          {!self && <Button variant="outline" size="sm" className="justify-self-start" onClick={() => setAssignments((s) => [...s, { role_id: "", scope_type: "GLOBAL", scope_id: null }])}><Plus /> Add role</Button>}
+          {!self && !locked && !restricted && <Button variant="outline" size="sm" className="justify-self-start" onClick={() => setAssignments((s) => [...s, { role_id: "", scope_type: "GLOBAL", scope_id: null }])}><Plus /> Add role</Button>}
         </div>
         <div className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-between">
           <div className="flex gap-2">
-            {user && !self && <Button variant="ghost" className={user.is_active ? "text-destructive" : ""} loading={toggle.isPending} onClick={() => toggle.mutate(undefined)}>{user.is_active ? "Disable user" : "Enable user"}</Button>}
-            {user && password && <Button variant="outline" loading={reset.isPending} onClick={() => reset.mutate(undefined)}><KeyRound /> Reset password</Button>}
+            {user && !self && !locked && <Button variant="ghost" className={user.is_active ? "text-destructive" : ""} loading={toggle.isPending} onClick={() => toggle.mutate(undefined)}>{user.is_active ? "Disable user" : "Enable user"}</Button>}
+            {user && password && !isSuper && !locked && <Button variant="outline" loading={reset.isPending} onClick={() => reset.mutate(undefined)}><KeyRound /> Reset password</Button>}
           </div>
           <div className="flex flex-col-reverse gap-2 sm:flex-row">
             <Button variant="outline" onClick={onClose}>Close</Button>
             {user ? (
-              <Button loading={saveAssign.isPending} disabled={self && name === user.name && phone === (user.phone ?? "")} onClick={() => saveAssign.mutate(undefined)}>Save</Button>
+              <Button loading={saveAssign.isPending} disabled={locked || (self && name === user.name && phone === (user.phone ?? ""))} onClick={() => saveAssign.mutate(undefined)}>Save</Button>
             ) : (
-              <Button loading={create.isPending} disabled={!name || !email || password.length < 10} onClick={() => create.mutate(undefined)}>Create user</Button>
+              <Button loading={create.isPending} disabled={!name || !email || password.length < 10 || (restricted && !assignments[0]?.scope_id)} onClick={() => create.mutate(undefined)}>Create user</Button>
             )}
           </div>
         </div>
@@ -343,6 +360,63 @@ export function AuditPage() {
         </ul>
         {q.hasNextPage && <div className="border-t p-3 text-center"><Button variant="outline" loading={q.isFetchingNextPage} onClick={() => q.fetchNextPage()}>Load older</Button></div>}
       </Card>
+    </>
+  );
+}
+
+
+interface SystemInfo {
+  environment: string;
+  database_ok: boolean;
+  users_total: number;
+  users_active: number;
+  users_by_role: Record<string, number>;
+  settings: Record<string, string | number | boolean>;
+}
+
+const SETTING_LABELS: Record<string, string> = {
+  company: "Company",
+  timezone: "Time zone",
+  grn_tolerance_pct: "Over-receipt tolerance (%)",
+};
+
+export function SystemPage() {
+  const { data, isLoading } = useQuery({ queryKey: ["system"], queryFn: async () => (await get<SystemInfo>("/admin/system")).data });
+  if (isLoading || !data) return <PageHeader title="System" subtitle="Loading…" />;
+  const rows: [string, string][] = [
+    ["Environment", data.environment],
+    ["Database", data.database_ok ? "Connected" : "Unavailable"],
+    ["Users (active / total)", `${data.users_active} / ${data.users_total}`],
+    ...Object.entries(data.users_by_role).map(([k, v]) => [`${humanize(k)}`, String(v)] as [string, string]),
+  ];
+  return (
+    <>
+      <PageHeader title="System" subtitle="Visible to the Super Admin only" />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card className="p-4 md:p-5">
+          <p className="mb-3 text-sm font-medium">Overview</p>
+          <dl className="divide-y text-sm">
+            {rows.map(([k, v]) => (
+              <div key={k} className="flex justify-between py-2">
+                <dt className="text-muted-foreground">{k}</dt>
+                <dd className="font-medium">{v}</dd>
+              </div>
+            ))}
+          </dl>
+        </Card>
+        <Card className="p-4 md:p-5">
+          <p className="mb-3 text-sm font-medium">Configuration</p>
+          <dl className="divide-y text-sm">
+            {Object.entries(data.settings).map(([k, v]) => (
+              <div key={k} className="flex justify-between py-2">
+                <dt className="text-muted-foreground">{SETTING_LABELS[k] ?? humanize(k)}</dt>
+                <dd className="font-medium">{typeof v === "boolean" ? (v ? "On" : "Off") : String(v)}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className="mt-3 text-xs text-muted-foreground">Settings are changed in the server's .env file and need an API restart.</p>
+        </Card>
+      </div>
     </>
   );
 }

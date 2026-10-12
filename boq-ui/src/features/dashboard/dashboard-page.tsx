@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowRight, CheckCircle2 } from "lucide-react";
+import { AlertTriangle, ArrowDownToLine, ArrowRight, BookOpenCheck, CheckCircle2, ClipboardList } from "lucide-react";
 import { Link } from "react-router";
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { ErrorState, PageHeader, Section } from "@/components/common/page";
 import { KpiCard } from "@/components/common/widgets";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/misc";
 import { get } from "@/lib/api";
@@ -12,7 +13,7 @@ import { fmtInt, fmtMoney, fmtMoneyShort, fmtQty } from "@/lib/format";
 import type { Dashboard } from "@/lib/types";
 
 export function DashboardPage() {
-  const { me } = useAuth();
+  const { me, can } = useAuth();
   const { data, isLoading, error, refetch } = useQuery({ queryKey: ["dashboard"], queryFn: () => get<Dashboard>("/dashboard"), refetchInterval: 120_000 });
   const d = data?.data;
   const greeting = new Date().getHours() < 12 ? "Good morning" : new Date().getHours() < 17 ? "Good afternoon" : "Good evening";
@@ -20,6 +21,25 @@ export function DashboardPage() {
   return (
     <>
       <PageHeader title={`${greeting}, ${me?.name.split(" ")[0]}`} subtitle={`FY ${d?.financial_year ?? me?.financial_year}${d?.boq_no ? ` · Live BOQ ${d.boq_no}` : ""}`} />
+      {can("grn.post") && (
+        <div className="mb-4 flex flex-wrap gap-2">
+          <Button asChild variant="outline">
+            <Link to="/rfqs?queue=store">
+              <ClipboardList /> Site requests to approve
+            </Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link to="/grns/new">
+              <ArrowDownToLine /> Post inward (GRN)
+            </Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link to="/stock/ledger">
+              <BookOpenCheck /> Central ledger
+            </Link>
+          </Button>
+        </div>
+      )}
       {error && <ErrorState error={error} retry={refetch} />}
       {isLoading && (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">

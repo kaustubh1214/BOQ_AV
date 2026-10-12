@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { type Column, DataList, Pager } from "@/components/common/data-list";
 import { ActionBar, EmptyState, ErrorState, InfoGrid, LoadingRows, PageHeader, Section, StatusBadge } from "@/components/common/page";
-import { MasterSelect, MaterialPicker, type PickedMaterial } from "@/components/common/pickers";
+import { MasterSelect, MaterialPicker, type PickedMaterial, UnitSelect } from "@/components/common/pickers";
 import { ApprovalTimeline, Attachments, ConfirmAction, QtyInput } from "@/components/common/widgets";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -72,7 +72,7 @@ export function BoqDetailPage() {
   const { data: boq, isLoading, error } = useOne<Boq>("boq", `/boqs/${id}`);
   const { data: progress } = useQuery({ queryKey: ["boq-progress", id], queryFn: async () => (await get<{ lines: ProgressLine[]; totals: Record<string, number | null> }>(`/boqs/${id}/progress`)).data, enabled: !!boq && boq.status !== "DRAFT" });
   const inv = ["boq", "boqs", "boq-progress"];
-  const submit = useAction(() => post(`/boqs/${id}/submit`, { version: boq!.version }), { success: "Submitted for approval", invalidate: inv });
+  const submit = useAction(() => post<Boq>(`/boqs/${id}/submit`, { version: boq!.version }), { success: (b) => (b.status === "APPROVED" ? "BOQ approved and live" : "Submitted for approval"), invalidate: inv });
   const approve = useAction((comment: string) => post(`/boqs/${id}/approve`, { version: boq!.version, comment: comment || null }), { success: "BOQ approved — it is now the live central store master", invalidate: inv });
   const reject = useAction((comment: string) => post(`/boqs/${id}/reject`, { version: boq!.version, comment }), { success: "BOQ rejected", invalidate: inv });
   const revise = useAction(() => post<Boq>(`/boqs/${id}/revise`), { success: (b) => `Revision ${b.boq_no} created`, invalidate: inv, onSuccess: (b) => nav(`/boqs/${b.id}/edit`) });
@@ -82,7 +82,7 @@ export function BoqDetailPage() {
   if (isLoading) return <LoadingRows />;
   if (error || !boq) return <ErrorState error={error} />;
   const editable = ["DRAFT", "REJECTED"].includes(boq.status) && can("boq.create");
-  const isMaker = boq.approvals.some((a) => a.action === "SUBMITTED" && a.actor_id === me?.id);
+  const autoApprove = can("boq.approve");
   const lines = progress?.lines ?? [];
 
   return (
@@ -102,8 +102,8 @@ export function BoqDetailPage() {
               </Button>
             )}
             {editable && <ConfirmAction label="Discard" variant="ghost" title="Discard this draft?" onConfirm={() => cancel.mutateAsync(undefined)} />}
-            {editable && <ConfirmAction label="Submit" icon={<Send />} title="Submit BOQ for approval?" description="Management will be notified." onConfirm={() => submit.mutateAsync(undefined)} />}
-            {boq.status === "SUBMITTED" && can("boq.approve") && !isMaker && (
+            {editable && <ConfirmAction label={autoApprove ? "Submit & approve" : "Submit"} icon={<Send />} title={autoApprove ? "Submit and approve this BOQ?" : "Submit BOQ for approval?"} description={autoApprove ? "It becomes the live central store master for the year; any earlier revision is superseded." : "The approver will be notified."} onConfirm={() => submit.mutateAsync(undefined)} />}
+            {boq.status === "SUBMITTED" && can("boq.approve") && (
               <>
                 <ConfirmAction label="Reject" variant="outline" title="Reject BOQ" comment="required" onConfirm={(c) => reject.mutateAsync(c)} />
                 <ConfirmAction label="Approve" variant="success" title={`Approve ${boq.boq_no}?`} description="It becomes the live central store master for the year; any earlier revision is superseded." comment="optional" onConfirm={(c) => approve.mutateAsync(c)} />
@@ -246,14 +246,15 @@ interface LineRow {
   remarks: string;
   allocations: AllocRow[];
   open: boolean;
+  uom_id: string;
 }
 
-const blankLine = (): LineRow => ({ key: crypto.randomUUID(), material: null, planned_qty: "", estimated_rate: "", remarks: "", allocations: [], open: false });
+const blankLine = (): LineRow => ({ key: crypto.randomUUID(), material: null, planned_qty: "", estimated_rate: "", remarks: "", allocations: [], open: false, uom_id: "" });
 
 export function BoqFormPage() {
   const { id } = useParams();
   const nav = useNavigate();
-  const { me } = useAuth();
+  const { me, can } = useAuth();
   const editing = !!id;
   const { data: existing } = useOne<Boq>("boq", id ? `/boqs/${id}` : null);
   const [title, setTitle] = useState("");
@@ -276,6 +277,7 @@ export function BoqFormPage() {
         remarks: i.remarks ?? "",
         allocations: i.allocations.map((a) => ({ project_id: a.project_id, site_id: a.site_id ?? "", allocated_qty: String(a.allocated_qty) })),
         open: false,
+        uom_id: "",
       })),
     );
   }, [existing]);
@@ -286,7 +288,7 @@ export function BoqFormPage() {
   const update = (key: string, patch: Partial<LineRow>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
   const save = useAction(
-    () => {
+    async (publish: boolean) => {
       const body = {
         title,
         financial_year: fy || null,
@@ -296,16 +298,20 @@ export function BoqFormPage() {
           .map((l) => ({
             material_id: l.material!.id,
             planned_qty: Number(l.planned_qty),
+            uom_id: l.uom_id || null,
             estimated_rate: Number(l.estimated_rate || 0),
             remarks: l.remarks || null,
             allocations: l.allocations.filter((a) => a.project_id && Number(a.allocated_qty) > 0).map((a) => ({ project_id: a.project_id, site_id: a.site_id || null, allocated_qty: Number(a.allocated_qty) })),
           })),
       };
-      return editing ? put<Boq>(`/boqs/${id}`, { ...body, version: existing!.version }) : post<Boq>("/boqs", body, { "Idempotency-Key": idem });
+      let b = editing ? await put<Boq>(`/boqs/${id}`, { ...body, version: existing!.version }) : await post<Boq>("/boqs", body, { "Idempotency-Key": idem });
+      if (publish) b = await post<Boq>(`/boqs/${b.id}/submit`, { version: b.version });
+      return b;
     },
-    { success: "BOQ saved", invalidate: ["boqs", "boq"], onSuccess: (b) => nav(`/boqs/${b.id}`) },
+    { success: (b) => (b.status === "APPROVED" ? "BOQ approved and live" : b.status === "SUBMITTED" ? "Submitted for approval" : "BOQ saved"), invalidate: ["boqs", "boq"], onSuccess: (b) => nav(`/boqs/${b.id}`) },
   );
 
+  const autoApprove = can("boq.approve");
   const valid = title.trim().length >= 3 && lines.some((l) => l.material && Number(l.planned_qty) > 0);
 
   return (
@@ -329,12 +335,15 @@ export function BoqFormPage() {
             {lines.map((l, idx) => (
               <li key={l.key} className="grid gap-3 p-4 md:grid-cols-[2fr_1fr_1fr_auto] md:items-end md:px-5">
                 <Field label={`${idx + 1}. Material`}>
-                  <MaterialPicker value={l.material} onChange={(m) => update(l.key, { material: m })} />
+                  <MaterialPicker value={l.material} onChange={(m) => update(l.key, { material: m, uom_id: "" })} />
                 </Field>
-                <Field label={`Planned qty${l.material ? ` (${l.material.uom})` : ""}`}>
-                  <QtyInput value={l.planned_qty} onChange={(e) => update(l.key, { planned_qty: e.target.value })} />
+                <Field label="Planned qty" hint={l.uom_id ? "Allocations below use the same unit" : undefined}>
+                  <div className="flex gap-2">
+                    <QtyInput value={l.planned_qty} onChange={(e) => update(l.key, { planned_qty: e.target.value })} />
+                    <UnitSelect material={l.material} value={l.uom_id} className="w-24 shrink-0" onChange={(uom_id) => update(l.key, { uom_id })} />
+                  </div>
                 </Field>
-                <Field label="Estimated rate (₹)">
+                <Field label={`Estimated rate (₹${l.material ? ` per ${l.uom_id ? "selected unit" : l.material.uom}` : ""})`}>
                   <QtyInput value={l.estimated_rate} onChange={(e) => update(l.key, { estimated_rate: e.target.value })} />
                 </Field>
                 <div className="flex gap-1">
@@ -383,9 +392,14 @@ export function BoqFormPage() {
           <Button variant="outline" onClick={() => nav(-1)}>
             Cancel
           </Button>
-          <Button loading={save.isPending} disabled={!valid} onClick={() => save.mutate(undefined)}>
+          <Button variant={autoApprove ? "outline" : "default"} loading={save.isPending && !save.variables} disabled={!valid} onClick={() => save.mutate(false)}>
             Save draft
           </Button>
+          {autoApprove && (
+            <Button variant="success" loading={save.isPending && save.variables === true} disabled={!valid} onClick={() => save.mutate(true)}>
+              <Send /> Save &amp; approve
+            </Button>
+          )}
         </ActionBar>
       </div>
     </>

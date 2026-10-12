@@ -22,7 +22,6 @@ from app.services.common import (
     bump,
     check_version,
     ensure_status,
-    maker_checker,
     next_doc_no,
     now_utc,
     q2,
@@ -447,7 +446,6 @@ async def approve_adjustment(adj_id: uuid.UUID, body: CommentIn, db: DB, ctx: Pe
     a = await _adj_for(db, ctx, adj_id, "adjustment.approve")
     ensure_status(a, AdjustmentStatus.SUBMITTED, action="approve")
     check_version(a, body.version)
-    maker_checker(a.created_by_id, ctx)
 
     if a.reason == AdjustmentReason.PHYSICAL_COUNT:
         # Lock balances first so the system qty we compare against can't move under us.

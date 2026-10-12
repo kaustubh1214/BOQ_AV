@@ -1046,6 +1046,32 @@
         }
       }
     },
+    "/api/v1/admin/system": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "System overview for the Super Admin",
+        "operationId": "system_info_api_v1_admin_system_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_SystemOut_"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ]
+      }
+    },
     "/api/v1/meta/enums": {
       "get": {
         "tags": [
@@ -5319,16 +5345,16 @@
               "anyOf": [
                 {
                   "type": "string",
-                  "pattern": "^(pm|store|issue|mine)$"
+                  "pattern": "^(store|issue|mine)$"
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "Work queues: pm, store, issue, mine",
+              "description": "Work queues: store, issue, mine",
               "title": "Queue"
             },
-            "description": "Work queues: pm, store, issue, mine"
+            "description": "Work queues: store, issue, mine"
           },
           {
             "name": "project_id",
@@ -5750,13 +5776,13 @@
         }
       }
     },
-    "/api/v1/rfqs/{rfq_id}/pm-approve": {
+    "/api/v1/rfqs/{rfq_id}/store-approve": {
       "post": {
         "tags": [
           "RFQ (material request)"
         ],
-        "summary": "Project Manager approval (can reduce quantities)",
-        "operationId": "pm_approve_api_v1_rfqs__rfq_id__pm_approve_post",
+        "summary": "Store Manager approval (can reduce quantities); checks BOQ project allocation",
+        "operationId": "store_approve_api_v1_rfqs__rfq_id__store_approve_post",
         "security": [
           {
             "HTTPBearer": []
@@ -5808,13 +5834,13 @@
         }
       }
     },
-    "/api/v1/rfqs/{rfq_id}/store-approve": {
+    "/api/v1/rfqs/{rfq_id}/approve-and-issue": {
       "post": {
         "tags": [
           "RFQ (material request)"
         ],
-        "summary": "Store approval; checks BOQ project allocation",
-        "operationId": "store_approve_api_v1_rfqs__rfq_id__store_approve_post",
+        "summary": "One step: Store Manager approves (qty may be reduced) and issues; returns the dispatched issue note",
+        "operationId": "approve_and_issue_api_v1_rfqs__rfq_id__approve_and_issue_post",
         "security": [
           {
             "HTTPBearer": []
@@ -5830,6 +5856,22 @@
               "format": "uuid",
               "title": "Rfq Id"
             }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
           }
         ],
         "requestBody": {
@@ -5837,18 +5879,18 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ApproveIn"
+                "$ref": "#/components/schemas/ApproveIssueIn"
               }
             }
           }
         },
         "responses": {
-          "200": {
+          "201": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Envelope_RfqOut_"
+                  "$ref": "#/components/schemas/Envelope_IssueOut_"
                 }
               }
             }
@@ -9908,6 +9950,110 @@
         "type": "object",
         "title": "ApproveIn"
       },
+      "ApproveIssueIn": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ApproveLineIn"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "Omit to approve every line at its current quantity",
+            "default": []
+          },
+          "comment": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 1000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Comment"
+          },
+          "override_allocation": {
+            "type": "boolean",
+            "title": "Override Allocation",
+            "default": false
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "issue_date": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue Date"
+          },
+          "vehicle_no": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vehicle No"
+          },
+          "driver_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Driver Name"
+          },
+          "driver_phone": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Driver Phone"
+          },
+          "remarks": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 2000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Remarks"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ApproveIssueIn"
+      },
       "ApproveLineIn": {
         "properties": {
           "item_id": {
@@ -11149,6 +11295,47 @@
               }
             ],
             "title": "Parent Id"
+          },
+          "default_uom_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Uom Id"
+          },
+          "default_hsn_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 12
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Hsn Code"
+          },
+          "default_gst_rate": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Gst Rate"
           }
         },
         "additionalProperties": false,
@@ -11198,6 +11385,40 @@
               }
             ],
             "title": "Parent Id"
+          },
+          "default_uom_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Uom Id"
+          },
+          "default_hsn_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Hsn Code"
+          },
+          "default_gst_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Gst Rate"
           }
         },
         "type": "object",
@@ -11238,6 +11459,47 @@
               }
             ],
             "title": "Parent Id"
+          },
+          "default_uom_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Uom Id"
+          },
+          "default_hsn_code": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 12
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Hsn Code"
+          },
+          "default_gst_rate": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100.0,
+                "minimum": 0.0
+              },
+              {
+                "type": "string",
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Gst Rate"
           },
           "is_active": {
             "anyOf": [
@@ -12545,6 +12807,29 @@
           "data"
         ],
         "title": "Envelope[StoreOut]"
+      },
+      "Envelope_SystemOut_": {
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "title": "Success",
+            "default": true
+          },
+          "data": {
+            "$ref": "#/components/schemas/SystemOut"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Meta",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "Envelope[SystemOut]"
       },
       "Envelope_TokenOut_": {
         "properties": {
@@ -15664,6 +15949,11 @@
           "company_name": {
             "type": "string",
             "title": "Company Name"
+          },
+          "maker_checker": {
+            "type": "boolean",
+            "title": "Maker Checker",
+            "default": false
           },
           "financial_year": {
             "type": "string",
@@ -18921,6 +19211,63 @@
         "additionalProperties": false,
         "type": "object",
         "title": "StoreUpdate"
+      },
+      "SystemOut": {
+        "properties": {
+          "environment": {
+            "type": "string",
+            "title": "Environment"
+          },
+          "database_ok": {
+            "type": "boolean",
+            "title": "Database Ok"
+          },
+          "users_total": {
+            "type": "integer",
+            "title": "Users Total"
+          },
+          "users_active": {
+            "type": "integer",
+            "title": "Users Active"
+          },
+          "users_by_role": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Users By Role"
+          },
+          "settings": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Settings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "environment",
+          "database_ok",
+          "users_total",
+          "users_active",
+          "users_by_role",
+          "settings"
+        ],
+        "title": "SystemOut"
       },
       "Task": {
         "properties": {

@@ -41,11 +41,17 @@ class CategoryIn(In):
     code: Code
     name: Name
     parent_id: uuid.UUID | None = None
+    default_uom_id: uuid.UUID | None = None
+    default_hsn_code: Annotated[str | None, Field(max_length=12)] = None
+    default_gst_rate: Annotated[Decimal | None, Field(ge=0, le=100)] = None
 
 
 class CategoryUpdate(In):
     name: Name | None = None
     parent_id: uuid.UUID | None = None
+    default_uom_id: uuid.UUID | None = None
+    default_hsn_code: Annotated[str | None, Field(max_length=12)] = None
+    default_gst_rate: Annotated[Decimal | None, Field(ge=0, le=100)] = None
     is_active: bool | None = None
     version: int | None = None
 
@@ -54,6 +60,9 @@ class CategoryOut(MasterOutBase):
     code: str
     name: str
     parent_id: uuid.UUID | None
+    default_uom_id: uuid.UUID | None = None
+    default_hsn_code: str | None = None
+    default_gst_rate: OptNum = None
 
 
 class UomIn(In):

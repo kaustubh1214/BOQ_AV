@@ -43,7 +43,7 @@ _ENTITIES = {
         MaterialRequest,
         lambda ctx, o, p: ctx.covers(p, site_id=o.site_id, project_id=o.project_id, store_ids=(o.store_id,)),
         ("rfq.read",),
-        ("rfq.create", "rfq.approve_pm", "rfq.approve_store"),
+        ("rfq.create", "rfq.approve_store"),
     ),
     "return": (
         ReturnNote,

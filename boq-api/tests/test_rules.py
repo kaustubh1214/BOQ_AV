@@ -10,27 +10,27 @@ from tests.conftest import TEST_DB_URL
 from tests.test_flow import approved_rfq, grn, issue
 
 
-async def test_maker_checker_on_grn_post(api, refs, plan):
-    ids = await plan([{"name": "MakerChk", "planned": 100, "rate": 5}])
+async def test_store_manager_can_post_their_own_grn(api, refs, plan):
+    """No two-person rule: the Store Manager drafts and posts; site users still cannot post."""
+    ids = await plan([{"name": "SelfPost", "planned": 100, "rate": 5}])
     sm = await api.as_("store_manager")
     g = await sm.ok(
         "POST",
         "/grns",
-        json={"vendor_id": refs["vendors"]["V-SBCT"], "items": [{"material_id": ids["MakerChk"], "received_qty": 10, "rate": 5}]},
+        json={"vendor_id": refs["vendors"]["V-SBCT"], "items": [{"material_id": ids["SelfPost"], "received_qty": 10, "rate": 5}]},
     )
-    r = await sm.post(f"/grns/{g['id']}/post", json={"version": g["version"]})
-    assert r.status_code == 403 and "Maker-checker" in r.json()["error"]["message"]
-    keeper = await api.as_("store_keeper")
-    r = await keeper.post(f"/grns/{g['id']}/post", json={"version": g["version"]})
-    assert r.status_code == 403  # keeper lacks grn.post
+    site = await api.as_("site_a")
+    assert (await site.post(f"/grns/{g['id']}/post", json={"version": g["version"]})).status_code == 403  # no grn.post
+    posted = await sm.ok("POST", f"/grns/{g['id']}/post", json={"version": g["version"]})
+    assert posted["status"] == "POSTED"
 
 
 async def test_grn_tolerance_blocks_over_receipt(api, refs, plan):
     ids = await plan([{"name": "Tolerance", "planned": 1000, "rate": 5}])
     await grn(api, refs, [{"material_id": ids["Tolerance"], "received_qty": 1000, "rate": 5}])
     await grn(api, refs, [{"material_id": ids["Tolerance"], "received_qty": 50, "rate": 5}])  # exactly +5 %
-    sk, sm = await api.as_("store_keeper"), await api.as_("store_manager")
-    g = await sk.ok(
+    sm = await api.as_("store_manager")
+    g = await sm.ok(
         "POST",
         "/grns",
         json={"vendor_id": refs["vendors"]["V-SBCT"], "items": [{"material_id": ids["Tolerance"], "received_qty": 1, "rate": 5}]},
@@ -46,7 +46,7 @@ async def test_material_not_in_boq_rejected(api, refs, code):
         "/masters/materials",
         json={"code": f"NB-{code}", "name": "Not planned", "category_id": refs["cats"]["CEM"], "base_uom_id": refs["uoms"]["KG"]},
     )
-    r = await (await api.as_("store_keeper")).post(
+    r = await (await api.as_("store_manager")).post(
         "/grns", json={"vendor_id": refs["vendors"]["V-SBCT"], "items": [{"material_id": m["id"], "received_qty": 1, "rate": 1}]}
     )
     assert r.status_code == 422 and r.json()["error"]["code"] == "MATERIAL_NOT_IN_BOQ"
@@ -56,11 +56,11 @@ async def test_issue_beyond_stock_and_approval(api, refs, plan):
     ids = await plan([{"name": "Scarce", "planned": 1000, "rate": 5}])
     await grn(api, refs, [{"material_id": ids["Scarce"], "received_qty": 100, "rate": 5}])
     rfq = await approved_rfq(api, refs, "AVH-TA", [{"material_id": ids["Scarce"], "requested_qty": 300}])
-    sk, sm = await api.as_("store_keeper"), await api.as_("store_manager")
+    sm = await api.as_("store_manager")
     item = rfq["items"][0]
-    r = await sk.post("/issue-notes", json={"request_id": rfq["id"], "items": [{"request_item_id": item["id"], "issued_qty": 301}]})
+    r = await sm.post("/issue-notes", json={"request_id": rfq["id"], "items": [{"request_item_id": item["id"], "issued_qty": 301}]})
     assert r.status_code == 422 and r.json()["error"]["code"] == "EXCEEDS_APPROVED"
-    n = await sk.ok("POST", "/issue-notes", json={"request_id": rfq["id"], "items": [{"request_item_id": item["id"], "issued_qty": 300}]})
+    n = await sm.ok("POST", "/issue-notes", json={"request_id": rfq["id"], "items": [{"request_item_id": item["id"], "issued_qty": 300}]})
     r = await sm.post(f"/issue-notes/{n['id']}/issue", json={"version": n["version"]})
     assert r.status_code == 409 and r.json()["error"]["code"] == "INSUFFICIENT_STOCK"
     assert r.json()["error"]["details"]["available"] == 100
@@ -72,12 +72,12 @@ async def test_scope_isolation_between_sites_and_projects(api, refs, plan):
     r = await site_a.ok(
         "POST", "/rfqs", json={"site_id": refs["sites"]["AVH-TA"]["id"], "items": [{"material_id": ids["Scope"], "requested_qty": 1}]}
     )
-    for who in ("site_b", "pm_greens"):
+    for who in ("site_b", "site_p1"):
         other = await api.as_(who)
         assert (await other.get(f"/rfqs/{r['id']}")).status_code == 404  # 404, not 403: no ID probing
         listed = await other.ok("GET", "/rfqs?limit=200")
         assert r["id"] not in {x["id"] for x in listed}
-    assert (await (await api.as_("pm_heights")).get(f"/rfqs/{r['id']}")).status_code == 200
+    assert (await (await api.as_("store_manager")).get(f"/rfqs/{r['id']}")).status_code == 200
     # Site B cannot raise a request for Tower A
     r2 = await (await api.as_("site_b")).post(
         "/rfqs", json={"site_id": refs["sites"]["AVH-TA"]["id"], "items": [{"material_id": ids["Scope"], "requested_qty": 1}]}
@@ -85,7 +85,7 @@ async def test_scope_isolation_between_sites_and_projects(api, refs, plan):
     assert r2.status_code == 404
 
 
-async def test_pm_cannot_approve_other_project(api, refs, plan):
+async def test_site_user_cannot_approve_or_issue(api, refs, plan):
     ids = await plan([{"name": "PMScope", "planned": 100, "rate": 5}])
     site_a = await api.as_("site_a")
     r = await site_a.ok(
@@ -93,8 +93,11 @@ async def test_pm_cannot_approve_other_project(api, refs, plan):
         "/rfqs",
         json={"site_id": refs["sites"]["AVH-TA"]["id"], "submit": True, "items": [{"material_id": ids["PMScope"], "requested_qty": 1}]},
     )
-    res = await (await api.as_("pm_greens")).post(f"/rfqs/{r['id']}/pm-approve", json={"version": r["version"]})
-    assert res.status_code == 404
+    site = await api.as_("site_a")
+    for path in ("store-approve", "approve-and-issue", "reject"):
+        res = await site.post(f"/rfqs/{r['id']}/{path}", json={"version": r["version"], "comment": "x"})
+        assert res.status_code == 403, path
+    assert (await site.post(f"/rfqs/{r['id']}/pm-approve", json={"version": r["version"]})).status_code in (404, 405)  # step removed
 
 
 async def test_finance_fields_hidden_for_site_users(api, refs):
@@ -105,8 +108,8 @@ async def test_finance_fields_hidden_for_site_users(api, refs):
     assert all(i["rate"] is None and i["amount"] is None for i in detail["items"])
     reports = {r["key"] for r in await site_a.ok("GET", "/reports")}
     assert "budget-vs-actual" not in reports and "site-stock" in reports
-    director = await api.as_("director")
-    d = await director.ok("GET", f"/issue-notes/{notes[0]['id']}")
+    manager = await api.as_("store_manager")
+    d = await manager.ok("GET", f"/issue-notes/{notes[0]['id']}")
     assert all(i["rate"] is not None for i in d["items"])
 
 
@@ -120,7 +123,6 @@ async def test_allocation_exceeded_needs_override(api, refs, plan):
         "/rfqs",
         json={"site_id": refs["sites"]["AVH-TA"]["id"], "submit": True, "items": [{"material_id": ids["Alloc"], "requested_qty": 150}]},
     )
-    r = await (await api.as_("pm_heights")).ok("POST", f"/rfqs/{r['id']}/pm-approve", json={"version": r["version"]})
     sm = await api.as_("store_manager")
     res = await sm.post(f"/rfqs/{r['id']}/store-approve", json={"version": r["version"]})
     assert res.status_code == 409 and res.json()["error"]["code"] == "ALLOCATION_EXCEEDED"
@@ -235,8 +237,8 @@ async def test_returns_flow(api, refs, plan):
 async def test_physical_count_adjustment(api, refs, plan):
     ids = await plan([{"name": "Count", "planned": 1000, "rate": 10}])
     await grn(api, refs, [{"material_id": ids["Count"], "received_qty": 100, "rate": 10}])
-    sk, sm = await api.as_("store_keeper"), await api.as_("store_manager")
-    a = await sk.ok(
+    sm = await api.as_("store_manager")
+    a = await sm.ok(
         "POST",
         "/stock-adjustments",
         json={
@@ -245,7 +247,7 @@ async def test_physical_count_adjustment(api, refs, plan):
             "items": [{"material_id": ids["Count"], "physical_qty": 97}],
         },
     )
-    a = await sk.ok("POST", f"/stock-adjustments/{a['id']}/submit", json={"version": a["version"]})
+    a = await sm.ok("POST", f"/stock-adjustments/{a['id']}/submit", json={"version": a["version"]})
     a = await sm.ok("POST", f"/stock-adjustments/{a['id']}/approve", json={"version": a["version"]})
     assert a["items"][0]["system_qty"] == 100 and a["items"][0]["qty_delta"] == -3
     bal = await sm.ok("GET", f"/stock/balances?store_id={refs['stores']['CS-01']}&material_id={ids['Count']}")
@@ -253,7 +255,7 @@ async def test_physical_count_adjustment(api, refs, plan):
 
 
 async def test_one_approved_boq_per_fy(api):
-    sm, director = await api.as_("store_manager"), await api.as_("director")
+    sm = await api.as_("store_manager")
     current = await sm.ok("GET", "/boqs/current")
     b = await sm.ok(
         "POST",
@@ -263,18 +265,17 @@ async def test_one_approved_boq_per_fy(api):
             "items": [{"material_id": current["items"][0]["material"]["id"], "planned_qty": 1, "estimated_rate": 1}],
         },
     )
-    b = await sm.ok("POST", f"/boqs/{b['id']}/submit", json={"version": b["version"]})
-    r = await director.post(f"/boqs/{b['id']}/approve", json={"version": b["version"]})
+    r = await sm.post(f"/boqs/{b['id']}/submit", json={"version": b["version"]})  # submit tries to approve → blocked
     assert r.status_code == 409 and r.json()["error"]["code"] == "BOQ_EXISTS_FOR_FY"
 
 
 async def test_exports_and_reports_respect_permissions(api):
-    director = await api.as_("director")
-    r = await director.get("/reports/stock-summary/export")
+    manager = await api.as_("store_manager")
+    r = await manager.get("/reports/stock-summary/export")
     assert r.status_code == 200 and r.content[:2] == b"PK"  # xlsx is a zip
-    keeper = await api.as_("store_keeper")
-    assert (await keeper.get("/reports/stock-summary/export")).status_code == 403
-    stock = await keeper.ok("GET", "/reports/stock-summary")
+    site = await api.as_("site_a")
+    assert (await site.get("/reports/stock-summary/export")).status_code == 403
+    stock = await site.ok("GET", "/reports/stock-summary")
     assert "value" not in {c["key"] for c in stock["columns"]}
 
 
@@ -286,7 +287,7 @@ async def test_issue_note_pdf(api):
 
 
 async def test_attachment_upload_validates_content(api, refs):
-    sk = await api.as_("store_keeper")
+    sk = await api.as_("store_manager")
     g = (await sk.ok("GET", "/grns?limit=1"))[0]
     files = {"file": ("invoice.png", b"\x89PNG\r\n\x1a\n" + b"0" * 100, "image/png")}
     up = await sk.ok("POST", "/attachments", data={"entity_type": "grn", "entity_id": g["id"]}, files=files)
@@ -307,3 +308,28 @@ async def test_dashboard_kpis_visible_to_site_users(api):
     assert kpis["open_rfqs"]["value"] is not None
     assert "boq_value" not in kpis and "stock_value" not in kpis  # finance KPIs omitted entirely
     assert any(t["key"] == "issue_receive" for t in d["tasks"])
+
+
+async def test_category_defaults_round_trip(api, refs, code):
+    sm = await api.as_("store_manager")
+    cat = await sm.ok(
+        "POST",
+        "/masters/categories",
+        json={
+            "code": f"ST{code}"[:12],
+            "name": "Steel test",
+            "default_uom_id": refs["uoms"]["KG"],
+            "default_hsn_code": "7214",
+            "default_gst_rate": 18,
+        },
+    )
+    assert cat["default_uom_id"] == refs["uoms"]["KG"] and cat["default_hsn_code"] == "7214" and cat["default_gst_rate"] == 18
+    upd = await sm.ok("PATCH", f"/masters/categories/{cat['id']}", json={"default_gst_rate": 12, "version": cat["version"]})
+    assert upd["default_gst_rate"] == 12
+
+
+async def test_submit_approves_in_one_step_for_the_store_manager(api, plan):
+    await plan([{"name": "AutoApprove", "planned": 10, "rate": 1}])  # plan() asserts the revision went APPROVED on submit
+    sm = await api.as_("store_manager")
+    cur = await sm.ok("GET", "/boqs/current")
+    assert cur["status"] == "APPROVED" and cur["approvals"][-1]["action"] == "APPROVED"

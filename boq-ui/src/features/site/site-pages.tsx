@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { type Column, DataList, Pager } from "@/components/common/data-list";
 import { ActionBar, EmptyState, ErrorState, InfoGrid, LoadingRows, PageHeader, Section, StatusBadge } from "@/components/common/page";
-import { MaterialPicker, type PickedMaterial, SiteSelect, useMySites } from "@/components/common/pickers";
+import { MaterialPicker, type PickedMaterial, SiteSelect, UnitSelect, useMySites } from "@/components/common/pickers";
 import { ConfirmAction, QtyInput } from "@/components/common/widgets";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -84,6 +84,7 @@ interface CLine {
   key: string;
   material: PickedMaterial | null;
   qty: string;
+  uom_id: string;
 }
 
 export function ConsumptionPage() {
@@ -123,13 +124,13 @@ export function ConsumptionPage() {
 function ConsumptionDialog({ siteId, onClose }: { siteId: string; onClose: () => void }) {
   const [date, setDate] = useState(todayIso());
   const [activity, setActivity] = useState("");
-  const [lines, setLines] = useState<CLine[]>([{ key: crypto.randomUUID(), material: null, qty: "" }]);
+  const [lines, setLines] = useState<CLine[]>([{ key: crypto.randomUUID(), material: null, qty: "", uom_id: "" }]);
   const [idem] = useState(newIdempotencyKey);
   const { data: stock } = useQuery({ queryKey: ["site-stock", siteId], queryFn: async () => (await get<SiteStockLine[]>("/site/stock", { site_id: siteId })).data });
   const atSite = new Set((stock ?? []).filter((s) => s.qty > 0).map((s) => s.material.id));
   const qtyAt = Object.fromEntries((stock ?? []).map((s) => [s.material.id, s.qty]));
   const save = useAction(
-    () => post("/consumptions", { site_id: siteId, entry_date: date, activity: activity || null, items: lines.filter((l) => l.material && Number(l.qty) > 0).map((l) => ({ material_id: l.material!.id, qty: Number(l.qty) })) }, { "Idempotency-Key": idem }),
+    () => post("/consumptions", { site_id: siteId, entry_date: date, activity: activity || null, items: lines.filter((l) => l.material && Number(l.qty) > 0).map((l) => ({ material_id: l.material!.id, qty: Number(l.qty), uom_id: l.uom_id || null })) }, { "Idempotency-Key": idem }),
     { success: "Consumption logged", invalidate: ["consumptions", "site-stock"], onSuccess: onClose },
   );
   const upd = (k: string, p: Partial<CLine>) => setLines((ls) => ls.map((l) => (l.key === k ? { ...l, ...p } : l)));
@@ -142,18 +143,21 @@ function ConsumptionDialog({ siteId, onClose }: { siteId: string; onClose: () =>
         </div>
         <ul className="grid gap-3">
           {lines.map((l) => (
-            <li key={l.key} className="grid grid-cols-[1fr_6.5rem_auto] items-end gap-2">
+            <li key={l.key} className="grid grid-cols-[1fr_11rem_auto] items-end gap-2">
               <Field label="Material">
-                <MaterialPicker value={l.material} onChange={(m) => upd(l.key, { material: m })} restrictTo={atSite} />
+                <MaterialPicker value={l.material} onChange={(m) => upd(l.key, { material: m, uom_id: "" })} restrictTo={atSite} />
               </Field>
               <Field label={l.material ? `Qty (max ${fmtQty(qtyAt[l.material.id])})` : "Qty"}>
-                <QtyInput value={l.qty} onChange={(e) => upd(l.key, { qty: e.target.value })} />
+                <div className="flex gap-2">
+                  <QtyInput value={l.qty} onChange={(e) => upd(l.key, { qty: e.target.value })} />
+                  <UnitSelect material={l.material} value={l.uom_id} className="w-[4.5rem] shrink-0 px-2" onChange={(uom_id) => upd(l.key, { uom_id })} />
+                </div>
               </Field>
               <Button variant="ghost" size="icon" aria-label="Remove" onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} disabled={lines.length === 1}><Trash2 /></Button>
             </li>
           ))}
         </ul>
-        <Button variant="outline" size="sm" className="justify-self-start" onClick={() => setLines((ls) => [...ls, { key: crypto.randomUUID(), material: null, qty: "" }])}><Plus /> Add material</Button>
+        <Button variant="outline" size="sm" className="justify-self-start" onClick={() => setLines((ls) => [...ls, { key: crypto.randomUUID(), material: null, qty: "", uom_id: "" }])}><Plus /> Add material</Button>
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button variant="outline" onClick={onClose}>Close</Button>
           <Button loading={save.isPending} disabled={!lines.some((l) => l.material && Number(l.qty) > 0)} onClick={() => save.mutate(undefined)}>Save</Button>
@@ -248,12 +252,12 @@ export function ReturnFormPage() {
   const [reason, setReason] = useState("");
   const [vehicle, setVehicle] = useState("");
   const [remarks, setRemarks] = useState("");
-  const [lines, setLines] = useState<CLine[]>([{ key: crypto.randomUUID(), material: null, qty: "" }]);
+  const [lines, setLines] = useState<CLine[]>([{ key: crypto.randomUUID(), material: null, qty: "", uom_id: "" }]);
   const [idem] = useState(newIdempotencyKey);
   const { data: stock } = useQuery({ queryKey: ["site-stock", site], queryFn: async () => (await get<SiteStockLine[]>("/site/stock", { site_id: site })).data, enabled: !!site });
   const atSite = new Set((stock ?? []).filter((s) => s.qty > 0).map((s) => s.material.id));
   const save = useAction(
-    () => post<ReturnNote>("/returns", { site_id: site, reason: reason || null, vehicle_no: vehicle || null, remarks: remarks || null, items: lines.filter((l) => l.material && Number(l.qty) > 0).map((l) => ({ material_id: l.material!.id, qty: Number(l.qty) })) }, { "Idempotency-Key": idem }),
+    () => post<ReturnNote>("/returns", { site_id: site, reason: reason || null, vehicle_no: vehicle || null, remarks: remarks || null, items: lines.filter((l) => l.material && Number(l.qty) > 0).map((l) => ({ material_id: l.material!.id, qty: Number(l.qty), uom_id: l.uom_id || null })) }, { "Idempotency-Key": idem }),
     { success: (r) => `${r.return_no} created`, invalidate: ["returns"], onSuccess: (r) => nav(`/returns/${r.id}`, { replace: true }) },
   );
   const upd = (k: string, p: Partial<CLine>) => setLines((ls) => ls.map((l) => (l.key === k ? { ...l, ...p } : l)));
@@ -270,14 +274,19 @@ export function ReturnFormPage() {
         <Section title="Material">
           <ul className="divide-y">
             {lines.map((l) => (
-              <li key={l.key} className="grid grid-cols-[1fr_7rem_auto] items-end gap-2 p-4 md:px-5">
-                <Field label="Material"><MaterialPicker value={l.material} onChange={(m) => upd(l.key, { material: m })} restrictTo={atSite} /></Field>
-                <Field label="Qty"><QtyInput value={l.qty} onChange={(e) => upd(l.key, { qty: e.target.value })} /></Field>
+              <li key={l.key} className="grid grid-cols-[1fr_11rem_auto] items-end gap-2 p-4 md:px-5">
+                <Field label="Material"><MaterialPicker value={l.material} onChange={(m) => upd(l.key, { material: m, uom_id: "" })} restrictTo={atSite} /></Field>
+                <Field label="Qty">
+                  <div className="flex gap-2">
+                    <QtyInput value={l.qty} onChange={(e) => upd(l.key, { qty: e.target.value })} />
+                    <UnitSelect material={l.material} value={l.uom_id} className="w-[4.5rem] shrink-0 px-2" onChange={(uom_id) => upd(l.key, { uom_id })} />
+                  </div>
+                </Field>
                 <Button variant="ghost" size="icon" aria-label="Remove" disabled={lines.length === 1} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))}><Trash2 /></Button>
               </li>
             ))}
           </ul>
-          <div className="border-t p-3 md:px-5"><Button variant="outline" onClick={() => setLines((ls) => [...ls, { key: crypto.randomUUID(), material: null, qty: "" }])}><Plus /> Add material</Button></div>
+          <div className="border-t p-3 md:px-5"><Button variant="outline" onClick={() => setLines((ls) => [...ls, { key: crypto.randomUUID(), material: null, qty: "", uom_id: "" }])}><Plus /> Add material</Button></div>
         </Section>
         <ActionBar>
           <Button variant="outline" onClick={() => nav(-1)}>Cancel</Button>

@@ -70,7 +70,7 @@ export function IssueListPage() {
 
 export function IssueDetailPage() {
   const { id } = useParams();
-  const { can, me } = useAuth();
+  const { can } = useAuth();
   const { data: n, isLoading, error } = useOne<IssueNote>("issue", `/issue-notes/${id}`);
   const [receiving, setReceiving] = useState(false);
   const inv = ["issue", "issues", "rfq", "rfqs"];
@@ -78,7 +78,6 @@ export function IssueDetailPage() {
   const cancel = useAction((reason: string) => post(`/issue-notes/${id}/cancel`, { version: n!.version, reason }), { success: "Issue note cancelled", invalidate: inv });
   if (isLoading) return <LoadingRows />;
   if (error || !n) return <ErrorState error={error} />;
-  const isMaker = n.created_by_id === me?.id;
   const cols: Column<IssueNote["items"][number]>[] = [
     { key: "m", header: "Material", cell: (i) => <div><p className="font-medium">{i.material.name}</p><p className="text-xs text-muted-foreground">{i.material.code}</p></div> },
     { key: "iss", header: "Issued", align: "right", cell: (i) => `${fmtQty(i.issued_qty)} ${i.material.uom}` },
@@ -116,7 +115,7 @@ export function IssueDetailPage() {
                 icon={<Truck />}
                 variant="success"
                 title="Dispatch material?"
-                description={isMaker ? "Maker-checker: someone other than the preparer must dispatch." : "Central stock is reduced at the current weighted-average rate; the site is notified."}
+                description={"Central stock is reduced at the current weighted-average rate; the site is notified."}
                 onConfirm={() => issue.mutateAsync(undefined)}
               />
             )}

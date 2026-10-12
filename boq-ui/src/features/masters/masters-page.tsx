@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Search, Upload } from "lucide-react";
 import { useRef, useState } from "react";
 import { NavLink, useParams } from "react-router";
@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Field, Input, Select, Textarea } from "@/components/ui/input";
-import { errorDetails, errorMessage, http } from "@/lib/api";
+import { errorDetails, errorMessage, get, http } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { fmtDate, fmtQty } from "@/lib/format";
 import { del, patch, post, useAction, useDebounced, useList } from "@/lib/hooks";
@@ -77,10 +77,15 @@ const MASTERS: MasterDef[] = [
     columns: [
       { key: "name", header: "Category", cell: (r) => r.name },
       { key: "code", header: "Code", cell: code },
+      { key: "hsn", header: "Default HSN", cell: (r) => r.default_hsn_code ?? "—" },
+      { key: "gst", header: "Default GST", cell: (r) => (r.default_gst_rate != null ? `${r.default_gst_rate}%` : "—"), align: "right" },
     ],
     fields: [
       { key: "code", label: "Code", createOnly: true, required: true },
       { key: "name", label: "Name", required: true },
+      { key: "default_uom_id", label: "Default unit", type: "select", path: "uoms", hint: "Pre-fills the base unit when a material of this category is added" },
+      { key: "default_hsn_code", label: "Default HSN code" },
+      { key: "default_gst_rate", label: "Default GST %", type: "number" },
     ],
   },
   {
@@ -296,6 +301,55 @@ function MasterForm({ def, row, onClose }: { def: MasterDef; row: Row | null; on
   const [material, setMaterial] = useState<PickedMaterial | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const set = (k: string, v: unknown) => setValues((s) => ({ ...s, [k]: v }));
+
+  // New material: picking a category / unit pre-fills the related fields (anything the user typed is kept).
+  const smart = isNew && def.key === "materials";
+  const touched = useRef(new Set<string>());
+  const [altUom, setAltUom] = useState("");
+  const [altFactor, setAltFactor] = useState("");
+  const { data: cats } = useQuery({
+    queryKey: ["master-select", "categories", undefined],
+    queryFn: () => get<Row[]>("/masters/categories", { limit: 500 }),
+    staleTime: 60_000,
+    enabled: smart,
+  });
+  const { data: convs } = useQuery({
+    queryKey: ["master-select", "uom-conversions", "global"],
+    queryFn: () => get<Row[]>("/masters/uom-conversions", { limit: 500 }),
+    staleTime: 60_000,
+    enabled: smart,
+  });
+  const globalFactor = (alt: string, base: string): number | null => {
+    for (const c of convs?.data ?? []) {
+      if (c.material_id) continue;
+      if (c.from_uom_id === alt && c.to_uom_id === base) return Number(c.factor);
+      if (c.from_uom_id === base && c.to_uom_id === alt) return 1 / Number(c.factor);
+    }
+    return null;
+  };
+  const suggestAlt = (alt: string, base: string) => {
+    const f = alt && base ? globalFactor(alt, base) : null;
+    setAltFactor(f != null ? String(Number(f.toFixed(6))) : "");
+  };
+  const change = (key: string, v: string) => {
+    set(key, v);
+    if (!smart) return;
+    if (key === "category_id") {
+      const c = cats?.data.find((x) => x.id === v);
+      if (!c) return;
+      const fill = (k: string, val: unknown) => !touched.current.has(k) && val != null && set(k, String(val));
+      fill("base_uom_id", c.default_uom_id);
+      fill("hsn_code", c.default_hsn_code);
+      fill("gst_rate", c.default_gst_rate);
+      if (c.default_uom_id && !touched.current.has("base_uom_id")) {
+        if (altUom === c.default_uom_id) setAltUom("");
+        suggestAlt(altUom === c.default_uom_id ? "" : altUom, c.default_uom_id);
+      }
+    } else {
+      touched.current.add(key);
+      if (key === "base_uom_id") suggestAlt(altUom, v);
+    }
+  };
   const fields = def.fields.filter((f) => isNew || !f.createOnly);
 
   const save = useAction(
@@ -307,10 +361,16 @@ function MasterForm({ def, row, onClose }: { def: MasterDef; row: Row | null; on
         if (f.type === "number" && v != null) v = Number(v);
         if (v != null || (!isNew && f.type !== "number" && !f.required)) body[f.key] = v;
       }
-      if (isNew) return post(`/masters/${def.key}`, body);
+      if (isNew) {
+        const created = await post<Row>(`/masters/${def.key}`, body);
+        if (smart && altUom && Number(altFactor) > 0 && globalFactor(altUom, values.base_uom_id) !== Number(altFactor)) {
+          await post("/masters/uom-conversions", { material_id: created.id, from_uom_id: altUom, to_uom_id: values.base_uom_id, factor: Number(altFactor) });
+        }
+        return created;
+      }
       return patch(`/masters/${def.key}/${row!.id}`, { ...body, version: row!.version });
     },
-    { success: `${def.singular[0].toUpperCase()}${def.singular.slice(1)} saved`, invalidate: [`masters-${def.key}`, "master-select", "materials-pick"], onSuccess: onClose },
+    { success: `${def.singular[0].toUpperCase()}${def.singular.slice(1)} saved`, invalidate: [`masters-${def.key}`, "master-select", "materials-pick", "masters-uom-conversions"], onSuccess: onClose },
   );
   const deactivate = useAction(() => del(`/masters/${def.key}/${row!.id}`), { success: "Deactivated", invalidate: [`masters-${def.key}`, "master-select"], onSuccess: onClose });
 
@@ -332,7 +392,7 @@ function MasterForm({ def, row, onClose }: { def: MasterDef; row: Row | null; on
           {fields.map((f) => (
             <Field key={f.key} label={f.label + (f.required ? " *" : "")} hint={f.hint} error={errors[f.key]} className={f.full ? "sm:col-span-2" : undefined}>
               {f.type === "select" ? (
-                <MasterSelect path={f.path!} value={values[f.key]} onChange={(v) => set(f.key, v)} label={(x) => (x.code ? `${x.name} (${x.code})` : x.name)} />
+                <MasterSelect path={f.path!} value={values[f.key]} onChange={(v) => change(f.key, v)} label={(x) => (x.code ? `${x.name} (${x.code})` : x.name)} />
               ) : f.type === "status" ? (
                 <Select value={values[f.key]} onChange={(e) => set(f.key, e.target.value)}>
                   <option value="ACTIVE">Active</option>
@@ -350,12 +410,31 @@ function MasterForm({ def, row, onClose }: { def: MasterDef; row: Row | null; on
                   step="any"
                   required={f.required}
                   value={values[f.key] ?? ""}
-                  onChange={(e) => set(f.key, e.target.value)}
+                  onChange={(e) => change(f.key, e.target.value)}
                   aria-invalid={!!errors[f.key]}
                 />
               )}
             </Field>
           ))}
+          {smart && (
+            <div className="grid gap-3 rounded-lg border border-dashed p-3 sm:col-span-2 sm:grid-cols-2">
+              <p className="text-xs text-muted-foreground sm:col-span-2">
+                Optional — also receive this material in another unit (e.g. tonnes or bags). Stock stays in the base unit.
+              </p>
+              <Field label="Other unit">
+                <MasterSelect
+                  path="uoms"
+                  value={altUom}
+                  placeholder="None"
+                  onChange={(v) => (setAltUom(v), suggestAlt(v, values.base_uom_id))}
+                  label={(x) => (x.code ? `${x.name} (${x.code})` : x.name)}
+                />
+              </Field>
+              <Field label={altUom && values.base_uom_id ? "1 other unit = ? base units" : "Conversion"} hint="Filled from the standard conversions when one exists">
+                <Input type="number" inputMode="decimal" step="any" disabled={!altUom} value={altFactor} onChange={(e) => setAltFactor(e.target.value)} />
+              </Field>
+            </div>
+          )}
           <div className="flex flex-col-reverse gap-2 sm:col-span-2 sm:flex-row sm:justify-between">
             {!isNew && row?.is_active ? (
               <Button type="button" variant="ghost" className="text-destructive" loading={deactivate.isPending} onClick={() => deactivate.mutate(undefined)}>

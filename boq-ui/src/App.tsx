@@ -14,6 +14,7 @@ const AdjustmentListPage = lazy(() => import("@/features/stock/stock-pages").the
 const LedgerPage = lazy(() => import("@/features/stock/stock-pages").then((m) => ({ default: m.LedgerPage })));
 const StockPage = lazy(() => import("@/features/stock/stock-pages").then((m) => ({ default: m.StockPage })));
 const AuditPage = lazy(() => import("@/features/admin/admin-pages").then((m) => ({ default: m.AuditPage })));
+const SystemPage = lazy(() => import("@/features/admin/admin-pages").then((m) => ({ default: m.SystemPage })));
 const RolesPage = lazy(() => import("@/features/admin/admin-pages").then((m) => ({ default: m.RolesPage })));
 const UsersPage = lazy(() => import("@/features/admin/admin-pages").then((m) => ({ default: m.UsersPage })));
 const BoqDetailPage = lazy(() => import("@/features/boq/boq-pages").then((m) => ({ default: m.BoqDetailPage })));
@@ -119,7 +120,8 @@ export default function App() {
         <Route path="masters" element={g(["masters.read"], <MastersPage />)} />
         <Route path="masters/:tab" element={g(["masters.read"], <MastersPage />)} />
         <Route path="admin/users" element={g(["users.manage"], <UsersPage />)} />
-        <Route path="admin/roles" element={g(["roles.manage", "users.manage"], <RolesPage />)} />
+        <Route path="admin/roles" element={g(["roles.manage"], <RolesPage />)} />
+        <Route path="admin/system" element={g(["system.manage"], <SystemPage />)} />
         <Route path="admin/audit" element={g(["audit.read"], <AuditPage />)} />
 
         <Route path="*" element={<EmptyState title="Page not found" />} />
